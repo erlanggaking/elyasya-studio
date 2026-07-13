@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Elyasya-Studio</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="header">
+      <div class="logo">ES</div>
+      <div>
+        <h1>Elyasya-Studio</h1>
+        <p class="subtitle" id="subtitle">Riset Search</p>
+      </div>
+    </header>
+
+    <section class="section">
+      <label class="toggle-row">
+        <input type="checkbox" id="captureToggle" checked />
+        <span>Capture presisi (DevTools Protocol)</span>
+      </label>
+      <p class="hint">
+        Aktif = data ditangkap di lapisan jaringan (paling akurat). Chrome akan
+        menampilkan bar "started debugging this browser" — itu normal. Matikan
+        untuk memakai mode intercept biasa tanpa bar peringatan.
+      </p>
+    </section>
+
+    <section class="section info">
+      <p>Buka <strong>shopee.co.id</strong> → cari produk → panel <em>riset data per halaman</em> muncul otomatis.</p>
+      <p>Untuk <strong>data komisi</strong>: login &amp; buka <strong>affiliate.shopee.co.id</strong> → Penawaran Produk. Panel akumulasi produk lengkap dengan komisi.</p>
+      <ul>
+        <li><strong>halaman selanjutnya</strong> — akumulasi data</li>
+        <li><strong>detail data</strong> — tabel lengkap + komisi</li>
+      </ul>
+    </section>
+
+    <section class="section">
+      <label for="apiUrl">API URL Elyasya (opsional sync)</label>
+      <input id="apiUrl" type="url" placeholder="https://elyasyastudio.com" />
+    </section>
+
+    <section class="section">
+      <label for="token">Extension Token</label>
+      <input id="token" type="password" placeholder="Token dari dashboard" />
+    </section>
+
+    <section class="section">
+      <label for="accountLabel">Label Akun (multi-akun)</label>
+      <input id="accountLabel" type="text" placeholder="mis. Toko Utama, Akun Buyer" />
+      <p class="hint">
+        Bila kamu pakai beberapa akun Shopee di browser berbeda, isi label ini
+        untuk membedakan sumber data di dashboard.
+      </p>
+    </section>
+
+    <div class="actions">
+      <button id="saveBtn" class="btn primary">Simpan</button>
+      <button id="pingBtn" class="btn">Test</button>
+    </div>
+
+    <div id="status" class="status">Siap — browse & search di Shopee.</div>
+
+    <footer class="footer">
+      <a href="https://elyasyastudio.com/research" target="_blank">Dashboard Riset →</a>
+    </footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

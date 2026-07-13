@@ -1,0 +1,62 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        { "header": "Content-Security-Policy", "operation": "remove" },
+        { "header": "Content-Security-Policy-Report-Only", "operation": "remove" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "||shopee.co.id",
+      "resourceTypes": ["main_frame", "sub_frame"]
+    }
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        { "header": "Content-Security-Policy", "operation": "remove" },
+        { "header": "Content-Security-Policy-Report-Only", "operation": "remove" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "||affiliate.shopee.co.id",
+      "resourceTypes": ["main_frame", "sub_frame"]
+    }
+  },
+  {
+    "id": 3,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        { "header": "Content-Security-Policy", "operation": "remove" },
+        { "header": "Content-Security-Policy-Report-Only", "operation": "remove" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "||live.shopee.co.id",
+      "resourceTypes": ["main_frame", "sub_frame"]
+    }
+  },
+  {
+    "id": 4,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        { "header": "Access-Control-Allow-Origin", "operation": "set", "value": "*" },
+        { "header": "Access-Control-Allow-Credentials", "operation": "set", "value": "true" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "||live.shopee.co.id",
+      "resourceTypes": ["xmlhttprequest"]
+    }
+  }
+]

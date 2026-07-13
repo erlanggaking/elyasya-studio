@@ -1,0 +1,293 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 340px;
+  margin: 0;
+  padding: 16px;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font-size: 13px;
+  color: #1e1b4b;
+  background: #fafafa;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.logo {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.subtitle {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.section {
+  margin-bottom: 12px;
+}
+
+label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 4px;
+}
+
+input[type="url"],
+input[type="password"],
+input[type="text"] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 12px;
+  background: #fff;
+}
+
+input:focus {
+  outline: 2px solid #c4b5fd;
+  border-color: #7c3aed;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.btn {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn.primary {
+  background: #7c3aed;
+  border-color: #7c3aed;
+  color: #fff;
+}
+
+.btn.full {
+  flex: 1 1 100%;
+}
+
+.status {
+  padding: 10px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  font-size: 11px;
+  line-height: 1.5;
+  min-height: 48px;
+}
+
+.status.ok {
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.status.err {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.footer {
+  margin-top: 12px;
+  text-align: center;
+}
+
+.footer a {
+  font-size: 11px;
+  color: #7c3aed;
+  text-decoration: none;
+}
+
+.footer a:hover {
+  text-decoration: underline;
+}
+
+.info {
+  background: #f5f3ff;
+  border: 1px solid #e9d5ff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.info ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.info li {
+  margin: 2px 0;
+}
+
+.btn.accent {
+  background: #f97316;
+  border-color: #f97316;
+  color: #fff;
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.panel-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.panel-badge.ok {
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.panel-badge.muted {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.trend-list,
+.feature-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.trend-list li,
+.feature-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  padding: 4px 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.trend-list li:last-child,
+.feature-list li:last-child {
+  border-bottom: none;
+}
+
+.trend-list .kw {
+  text-transform: capitalize;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trend-list .hits {
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.feature.active {
+  color: #065f46;
+}
+
+.feature.soon {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.feature.soon span {
+  font-size: 10px;
+  color: #cbd5e1;
+}
+
+.muted {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.device-id {
+  margin: 0;
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.toggle-row input {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+.hint {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #888;
+}

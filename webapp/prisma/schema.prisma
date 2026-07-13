@@ -1,0 +1,204 @@
+// Elyasya Studio — data model (PRD §8)
+// Dev pakai SQLite; produksi tinggal ganti provider ke postgresql.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+  devices      Device[]
+  tokens       ApiToken[]
+}
+
+// Personal access token untuk extension (menu Extension → Generate Token)
+model ApiToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  label     String    @default("Extension token")
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+  devices   Device[]
+}
+
+model Device {
+  id            String    @id @default(cuid())
+  deviceId      String    @unique // UUID dari extension
+  label         String    @default("Chrome Browser")
+  userAgent     String    @default("")
+  accountLabel  String    @default("")
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiTokenId    String?
+  apiToken      ApiToken? @relation(fields: [apiTokenId], references: [id], onDelete: SetNull)
+  lastSyncAt    DateTime?
+  lastCaptureAt DateTime?
+  registeredAt  DateTime  @default(now())
+}
+
+model Studio {
+  id           String        @id @default(cuid())
+  name         String
+  location     String        @default("")
+  createdAt    DateTime      @default(now())
+  hosts        Host[]
+  assignments  Assignment[]
+  liveSessions LiveSession[]
+}
+
+model Host {
+  id             String          @id @default(cuid())
+  name           String
+  note           String          @default("")
+  contact        String          @default("")
+  studioId       String?
+  studio         Studio?         @relation(fields: [studioId], references: [id], onDelete: SetNull)
+  createdAt      DateTime        @default(now())
+  shopeeAccounts ShopeeAccount[]
+  assignments    Assignment[]
+  liveSessions   LiveSession[]
+}
+
+model ShopeeAccount {
+  id             String    @id @default(cuid())
+  hostId         String
+  host           Host      @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  shopId         String
+  shopName       String    @default("")
+  accessToken    String    @default("")
+  refreshToken   String    @default("")
+  tokenExpiresAt DateTime?
+  scope          String    @default("livestream") // livestream | affiliate
+  status         String    @default("active") // active | expired | revoked
+  connectedAt    DateTime  @default(now())
+
+  @@unique([hostId, shopId])
+}
+
+model Product {
+  id             String            @id @default(cuid())
+  itemId         String
+  shopId         String
+  name           String
+  imageUrl       String            @default("")
+  price          Float             @default(0)
+  commissionRate Float             @default(0) // persen, mis. 5.5
+  sold           Int               @default(0)
+  revenue        Float             @default(0)
+  source         String            @default("extension") // extension | manual
+  firstSeenAt    DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  rawPayload     String            @default("{}") // JSON string capture extension
+  collection     CollectionEntry?
+  sessionItems   LiveSessionItem[]
+
+  @@unique([itemId, shopId])
+}
+
+model CollectionEntry {
+  id          String       @id @default(cuid())
+  productId   String       @unique
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tags        String       @default("") // comma-separated
+  addedAt     DateTime     @default(now())
+  addedBy     String       @default("")
+  assignments Assignment[]
+}
+
+model Assignment {
+  id                String            @id @default(cuid())
+  collectionEntryId String
+  collectionEntry   CollectionEntry   @relation(fields: [collectionEntryId], references: [id], onDelete: Cascade)
+  targetType        String // studio | host
+  studioId          String?
+  studio            Studio?           @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  hostId            String?
+  host              Host?             @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  status            String            @default("pending") // pending | pushed | removed
+  assignedAt        DateTime          @default(now())
+  sessionItems      LiveSessionItem[]
+}
+
+model LiveSession {
+  id              String            @id @default(cuid())
+  shopeeSessionId String            @default("")
+  hostId          String
+  host            Host              @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  studioId        String?
+  studio          Studio?           @relation(fields: [studioId], references: [id], onDelete: SetNull)
+  status          String            @default("not_started") // not_started | live | ended
+  title           String            @default("")
+  pushUrl         String            @default("")
+  pushKey         String            @default("")
+  shareUrl        String            @default("")
+  startedAt       DateTime?
+  endedAt         DateTime?
+  createdAt       DateTime          @default(now())
+  items           LiveSessionItem[]
+  snapshots       MetricSnapshot[]
+}
+
+model LiveSessionItem {
+  id                 String      @id @default(cuid())
+  liveSessionId      String
+  liveSession        LiveSession @relation(fields: [liveSessionId], references: [id], onDelete: Cascade)
+  productId          String
+  product            Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  itemNo             Int         @default(0)
+  isShowing          Boolean     @default(false)
+  pushedAt           DateTime    @default(now())
+  sourceAssignmentId String?
+  sourceAssignment   Assignment? @relation(fields: [sourceAssignmentId], references: [id], onDelete: SetNull)
+
+  @@unique([liveSessionId, productId])
+}
+
+model MetricSnapshot {
+  id                 String      @id @default(cuid())
+  liveSessionId      String
+  liveSession        LiveSession @relation(fields: [liveSessionId], references: [id], onDelete: Cascade)
+  capturedAt         DateTime    @default(now())
+  gmv                Float       @default(0)
+  orders             Int         @default(0)
+  ccu                Int         @default(0)
+  peakCcu            Int         @default(0)
+  views              Int         @default(0)
+  atc                Int         @default(0)
+  ctr                Float       @default(0)
+  co                 Float       @default(0)
+  likes              Int         @default(0)
+  comments           Int         @default(0)
+  shares             Int         @default(0)
+  avgViewingDuration Float       @default(0)
+  estCommission      Float       @default(0)
+}
+
+model CommissionReport {
+  id               String   @id @default(cuid())
+  shopeeAccountId  String   @default("")
+  orderId          String   @default("")
+  productItemId    String   @default("")
+  commissionAmount Float    @default(0)
+  status           String   @default("pending") // pending | approved | rejected
+  period           String   @default("")
+  syncedAt         DateTime @default(now())
+}
+
+// Keyword trending (dari capture extension) — untuk /api/research/trending
+model TrendKeyword {
+  id        String   @id @default(cuid())
+  keyword   String   @unique
+  count     Int      @default(1)
+  lastSeen  DateTime @default(now())
+}

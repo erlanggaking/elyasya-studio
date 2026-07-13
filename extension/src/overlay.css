@@ -1,0 +1,486 @@
+/* Elyasya-Studio v5 — Research panels */
+
+.elyasya-research-host {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  left: auto;
+  top: auto;
+  transform: none;
+  width: min(560px, calc(100vw - 24px));
+  z-index: 2147483645;
+  pointer-events: auto;
+}
+
+.elyasya-research-panel {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  margin: 0;
+  max-width: 1200px;
+  padding: 16px 20px 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  z-index: 2147483645;
+  position: relative;
+  display: block;
+}
+
+.elyasya-research-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.elyasya-research-panel__brand {
+  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.elyasya-research-panel__title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #222;
+  text-transform: lowercase;
+}
+
+.elyasya-research-panel__keyword {
+  font-size: 12px;
+  color: #888;
+  margin-left: auto;
+}
+
+.elyasya-research-panel__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 480px) {
+  .elyasya-research-panel__grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Tombol ciutkan & keadaan collapsed */
+.elyasya-collapse-btn {
+  margin-left: 6px;
+  border: 1px solid #e0e0e0;
+  background: #f7f7f7;
+  color: #555;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.elyasya-collapse-btn:hover {
+  background: #efefef;
+}
+
+.elyasya-research-panel.collapsed .elyasya-research-panel__grid,
+.elyasya-research-panel.collapsed .elyasya-research-panel__pages,
+.elyasya-research-panel.collapsed .elyasya-research-panel__actions {
+  display: none;
+}
+
+.elyasya-research-panel.collapsed {
+  padding-bottom: 12px;
+}
+
+.elyasya-research-panel.collapsed .elyasya-research-panel__head {
+  margin-bottom: 0;
+}
+
+.elyasya-metric {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  background: #fafafa;
+  border-radius: 8px;
+  border: 1px solid #f0f0f0;
+}
+
+.elyasya-metric__icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.elyasya-metric__val {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111;
+  line-height: 1.2;
+}
+
+.elyasya-metric__lbl {
+  font-size: 10px;
+  color: #888;
+  margin-top: 2px;
+}
+
+.elyasya-research-panel__pages {
+  font-size: 11px;
+  color: #666;
+  margin-bottom: 10px;
+}
+
+.elyasya-research-panel__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.elyasya-btn {
+  border: none;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.elyasya-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.elyasya-btn--orange {
+  background: #ee4d2d;
+  color: #fff;
+}
+
+.elyasya-btn--orange:hover:not(:disabled) {
+  background: #d73211;
+}
+
+/* Detail modal */
+.elyasya-detail-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.elyasya-detail-modal.open {
+  display: block;
+}
+
+.elyasya-detail-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.elyasya-detail-modal__box {
+  position: absolute;
+  inset: 2% 1%;
+  background: #f5f5f5;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.25);
+}
+
+.elyasya-detail-modal__header {
+  background: #ee4d2d;
+  color: #fff;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.elyasya-detail-modal__header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.elyasya-icon-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: #fff;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.elyasya-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.elyasya-modal-stats {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  padding: 10px;
+  background: #fff;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.elyasya-stat-card {
+  border-radius: 6px;
+  padding: 10px;
+  color: #fff;
+  text-align: center;
+}
+
+.elyasya-stat-card .v {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.elyasya-stat-card .l {
+  font-size: 10px;
+  opacity: 0.9;
+  margin-top: 2px;
+}
+
+.elyasya-stat-card.blue { background: #3b82f6; }
+.elyasya-stat-card.purple { background: #8b5cf6; }
+.elyasya-stat-card.yellow { background: #eab308; color: #222; }
+.elyasya-stat-card.red { background: #ef4444; }
+.elyasya-stat-card.green { background: #22c55e; }
+.elyasya-stat-card.cyan { background: #06b6d4; }
+
+.elyasya-modal-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 10px;
+  background: #fff;
+  border-bottom: 1px solid #e8e8e8;
+  font-size: 12px;
+}
+
+.elyasya-modal-filters label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #444;
+}
+
+.elyasya-modal-filters input,
+.elyasya-modal-filters select {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.elyasya-btn-filter {
+  background: #ee4d2d;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.elyasya-chk {
+  font-size: 11px;
+}
+
+.elyasya-modal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #fff;
+  border-bottom: 1px solid #e8e8e8;
+  font-size: 12px;
+}
+
+.elyasya-pag {
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.elyasya-modal-paginfo {
+  flex: 1;
+  text-align: center;
+  color: #666;
+}
+
+.elyasya-modal-table-wrap {
+  flex: 1;
+  overflow: auto;
+  background: #fff;
+}
+
+.elyasya-modal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.elyasya-modal-table th {
+  background: #f8f8f8;
+  border: 1px solid #e8e8e8;
+  padding: 8px 6px;
+  text-align: left;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.elyasya-modal-table td {
+  border: 1px solid #eee;
+  padding: 6px;
+  vertical-align: top;
+}
+
+.elyasya-td-name {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 200px;
+  max-width: 280px;
+}
+
+.elyasya-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+  background: #f0f0f0;
+}
+
+.elyasya-pname {
+  font-weight: 600;
+  line-height: 1.3;
+  color: #222;
+}
+
+.elyasya-ploc {
+  font-size: 10px;
+  color: #888;
+  margin-top: 2px;
+}
+
+.elyasya-badge {
+  display: inline-block;
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-right: 4px;
+  font-weight: 700;
+}
+
+.elyasya-badge.mall {
+  background: #ee4d2d;
+  color: #fff;
+}
+
+.elyasya-badge.star {
+  background: #fbbf24;
+  color: #222;
+}
+
+.elyasya-trend.up {
+  color: #16a34a;
+}
+
+.elyasya-trend.down {
+  color: #dc2626;
+}
+
+.elyasya-comm {
+  color: #7c3aed;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Tooltip sumber data: tandai elemen ber-tooltip dengan kursor bantuan */
+.elyasya-modal-table th[title],
+.elyasya-modal-table td[title],
+.elyasya-stat-card[title],
+.elyasya-metric[title] {
+  cursor: help;
+}
+
+/* Kolom checkbox bulk action */
+.elyasya-th-check,
+.elyasya-td-check {
+  width: 28px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.elyasya-th-check input,
+.elyasya-td-check input {
+  cursor: pointer;
+  width: 14px;
+  height: 14px;
+}
+
+/* Tombol aksi toolbar modal */
+.elyasya-btn-action {
+  border: 1px solid #ddd;
+  background: #fff;
+  color: #333;
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.elyasya-btn-action:hover {
+  background: #f5f5f5;
+}
+
+.elyasya-btn-action.send {
+  background: #ee4d2d;
+  border-color: #ee4d2d;
+  color: #fff;
+}
+
+.elyasya-btn-action.send:hover {
+  background: #d73f22;
+}
+
+.elyasya-btn-action.danger {
+  border-color: #e11d48;
+  color: #e11d48;
+}
+
+.elyasya-btn-action.danger:hover {
+  background: #fff1f2;
+}
+
+.elyasya-action-status {
+  font-size: 11px;
+  color: #16a34a;
+  white-space: nowrap;
+}
+
+.elyasya-action-status.err {
+  color: #e11d48;
+}

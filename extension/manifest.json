@@ -1,0 +1,84 @@
+{
+  "manifest_version": 3,
+  "name": "Elyasya-Studio",
+  "version": "6.1.0",
+  "description": "Riset produk & livestream Shopee — capture via DevTools Protocol, panel riset otomatis, akumulasi halaman, analitik & sync dashboard.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Elyasya-Studio",
+    "default_popup": "src/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["src/injected.js"],
+      "matches": ["https://shopee.co.id/*", "https://*.shopee.co.id/*"]
+    }
+  ],
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "debugger",
+    "declarativeNetRequest",
+    "webNavigation",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://shopee.co.id/*",
+    "https://*.shopee.co.id/*",
+    "https://affiliate.shopee.co.id/*",
+    "https://open-api.affiliate.shopee.co.id/*",
+    "https://live.shopee.co.id/*",
+    "https://elyasyastudio.com/*",
+    "http://localhost:3000/*"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "elyasya_ruleset",
+        "enabled": true,
+        "path": "src/rules.json"
+      }
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://shopee.co.id/*",
+        "https://*.shopee.co.id/*"
+      ],
+      "js": ["src/injected.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://shopee.co.id/*",
+        "https://*.shopee.co.id/*"
+      ],
+      "js": ["src/research-core.js", "src/research-ui.js", "src/content.js"],
+      "css": ["src/overlay.css"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://live.shopee.co.id/*"
+      ],
+      "js": ["src/content-live.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
