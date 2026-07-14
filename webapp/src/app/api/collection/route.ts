@@ -10,6 +10,7 @@ export async function GET(req: Request) {
   const q = (url.searchParams.get("q") || "").trim();
   const tag = (url.searchParams.get("tag") || "").trim();
   const sent = url.searchParams.get("sent"); // "yes" | "no" | null
+  const folder = url.searchParams.get("folder"); // id folder | "none" | null (semua)
   const minComm = Number(url.searchParams.get("minComm")) || 0;
   const sort = url.searchParams.get("sort") || ""; // trend | sold30d | komisi | rating
   const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
@@ -21,6 +22,7 @@ export async function GET(req: Request) {
     ...(minComm > 0 ? { product: { ...(q ? { name: { contains: q } } : {}), commissionRate: { gte: minComm } } } : {}),
     ...(sent === "yes" ? { assignments: { some: {} } } : {}),
     ...(sent === "no" ? { assignments: { none: {} } } : {}),
+    ...(folder === "none" ? { folderId: null } : folder ? { folderId: folder } : {}),
   };
 
   const orderBy =
@@ -58,6 +60,7 @@ export async function GET(req: Request) {
     entries: entries.map((e) => ({
       id: e.id,
       tags: e.tags ? e.tags.split(",").filter(Boolean) : [],
+      folderId: e.folderId,
       addedAt: e.addedAt,
       product: {
         id: e.product.id,
@@ -123,11 +126,28 @@ export async function POST(req: Request) {
   return NextResponse.json({ ok: true, entry });
 }
 
-// Update tags / hapus entri
+// Update tags / pindahkan entri ke folder
 export async function PATCH(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   const body = await req.json().catch(() => ({}));
+
+  // Bulk pindah folder: { ids: [...], folderId: "..." | null }
+  if (Array.isArray(body.ids) && "folderId" in body) {
+    const folderId = body.folderId ? String(body.folderId) : null;
+    if (folderId) {
+      const folder = await db.collectionFolder.findUnique({ where: { id: folderId } });
+      if (!folder) {
+        return NextResponse.json({ ok: false, error: "Folder tidak ditemukan" }, { status: 404 });
+      }
+    }
+    const moved = await db.collectionEntry.updateMany({
+      where: { id: { in: body.ids.map(String) } },
+      data: { folderId },
+    });
+    return NextResponse.json({ ok: true, moved: moved.count });
+  }
+
   const entry = await db.collectionEntry.update({
     where: { id: String(body.id) },
     data: { tags: String(body.tags ?? "") },

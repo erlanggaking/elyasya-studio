@@ -119,13 +119,23 @@ model Product {
   @@unique([itemId, shopId])
 }
 
+// Folder untuk memisahkan produk di Koleksi (mis. per kategori/host)
+model CollectionFolder {
+  id        String            @id @default(cuid())
+  name      String            @unique
+  createdAt DateTime          @default(now())
+  entries   CollectionEntry[]
+}
+
 model CollectionEntry {
-  id          String       @id @default(cuid())
-  productId   String       @unique
-  product     Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
-  tags        String       @default("") // comma-separated
-  addedAt     DateTime     @default(now())
-  addedBy     String       @default("")
+  id          String            @id @default(cuid())
+  productId   String            @unique
+  product     Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tags        String            @default("") // comma-separated
+  folderId    String?
+  folder      CollectionFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  addedAt     DateTime          @default(now())
+  addedBy     String            @default("")
   assignments Assignment[]
 }
 

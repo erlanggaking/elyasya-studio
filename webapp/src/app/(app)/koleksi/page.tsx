@@ -6,6 +6,7 @@ import { api, rupiah, num } from "@/lib/ui";
 type Entry = {
   id: string;
   tags: string[];
+  folderId: string | null;
   addedAt: string;
   product: {
     id: string;
@@ -25,6 +26,7 @@ type Entry = {
 };
 
 type Target = { id: string; name: string };
+type Folder = { id: string; name: string; count: number };
 
 export default function KoleksiPage() {
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -39,6 +41,11 @@ export default function KoleksiPage() {
   const [showSend, setShowSend] = useState(false);
   const [sendMode, setSendMode] = useState<"" | "studio" | "host">("");
   const [showAdd, setShowAdd] = useState(false);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [activeFolder, setActiveFolder] = useState(""); // "" semua | "none" tanpa folder | id folder
+  const [showFolder, setShowFolder] = useState(false);
+  const [folderName, setFolderName] = useState("");
+  const [showMove, setShowMove] = useState(false);
   const [showReset, setShowReset] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
   const [studios, setStudios] = useState<Target[]>([]);
@@ -57,14 +64,21 @@ export default function KoleksiPage() {
     if (sent) qs.set("sent", sent);
     if (minComm) qs.set("minComm", minComm);
     if (sort) qs.set("sort", sort);
+    if (activeFolder) qs.set("folder", activeFolder);
     const r = await api<{ entries: Entry[]; total: number }>(`/api/collection?${qs}`);
     if (r.ok) {
       setEntries(r.entries);
       setTotal(r.total);
     }
-  }, [page, q, tag, sent, minComm, sort]);
+  }, [page, q, tag, sent, minComm, sort, activeFolder]);
+
+  const loadFolders = useCallback(async () => {
+    const r = await api<{ folders: Folder[] }>("/api/collection/folders");
+    if (r.ok) setFolders(r.folders);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadFolders(); }, [loadFolders]);
 
   async function openSend() {
     const [s, h] = await Promise.all([
@@ -129,6 +143,61 @@ export default function KoleksiPage() {
     } else setMsg(`❌ ${r.error}`);
   }
 
+  async function createFolder() {
+    const name = folderName.trim();
+    if (!name) return;
+    const r = await api<{ folder: { id: string } }>("/api/collection/folders", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    if (r.ok) {
+      setShowFolder(false);
+      setFolderName("");
+      setMsg(`✅ Folder "${name}" dibuat`);
+      loadFolders();
+    } else setMsg(`❌ ${r.error}`);
+  }
+
+  async function renameFolder(f: Folder) {
+    const name = prompt("Nama folder baru:", f.name);
+    if (name === null || !name.trim()) return;
+    const r = await api("/api/collection/folders", {
+      method: "PATCH",
+      body: JSON.stringify({ id: f.id, name: name.trim() }),
+    });
+    if (!r.ok) setMsg(`❌ ${r.error}`);
+    loadFolders();
+  }
+
+  async function deleteFolder(f: Folder) {
+    if (!confirm(`Hapus folder "${f.name}"? Produk di dalamnya tidak ikut terhapus, hanya jadi tanpa folder.`)) return;
+    const r = await api("/api/collection/folders", {
+      method: "DELETE",
+      body: JSON.stringify({ id: f.id }),
+    });
+    if (r.ok) {
+      if (activeFolder === f.id) setActiveFolder("");
+      setMsg(`✅ Folder "${f.name}" dihapus`);
+      loadFolders();
+      load();
+    } else setMsg(`❌ ${r.error}`);
+  }
+
+  async function moveToFolder(folderId: string | null) {
+    const r = await api<{ moved: number }>("/api/collection", {
+      method: "PATCH",
+      body: JSON.stringify({ ids: [...selected], folderId }),
+    });
+    if (r.ok) {
+      const target = folderId ? folders.find((f) => f.id === folderId)?.name : "Tanpa Folder";
+      setMsg(`✅ ${r.moved} produk dipindah ke ${target}`);
+      setShowMove(false);
+      setSelected(new Set());
+      loadFolders();
+      load();
+    } else setMsg(`❌ ${r.error}`);
+  }
+
   async function updateTags(entry: Entry) {
     const t = prompt("Tags (pisahkan dengan koma):", entry.tags.join(","));
     if (t === null) return;
@@ -162,11 +231,49 @@ export default function KoleksiPage() {
             className="bg-red-900/40 hover:bg-red-900/70 border border-red-800 text-red-300 rounded-lg px-4 py-2 text-sm font-medium">
             ↺ Reset
           </button>
+          <button onClick={() => setShowFolder(true)}
+            className="bg-zinc-800 hover:bg-zinc-700 rounded-lg px-4 py-2 text-sm font-medium">
+            📁 Tambah Folder
+          </button>
           <button onClick={() => setShowAdd(true)}
             className="bg-zinc-800 hover:bg-zinc-700 rounded-lg px-4 py-2 text-sm font-medium">
             + Tambah Manual
           </button>
         </div>
+      </div>
+
+      {/* Tab folder */}
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <button onClick={() => { setActiveFolder(""); setPage(1); }}
+          className={`rounded-lg px-3 py-1.5 border transition ${
+            activeFolder === "" ? "border-orange-500 bg-orange-600/10 text-orange-300" : "border-zinc-800 bg-zinc-900 hover:border-zinc-600"
+          }`}>
+          Semua
+        </button>
+        {folders.map((f) => (
+          <span key={f.id}
+            className={`rounded-lg border transition inline-flex items-center ${
+              activeFolder === f.id ? "border-orange-500 bg-orange-600/10 text-orange-300" : "border-zinc-800 bg-zinc-900 hover:border-zinc-600"
+            }`}>
+            <button onClick={() => { setActiveFolder(f.id); setPage(1); }} className="px-3 py-1.5">
+              📁 {f.name} <span className="text-zinc-500">({f.count})</span>
+            </button>
+            {activeFolder === f.id && (
+              <span className="flex items-center gap-1 pr-2">
+                <button onClick={() => renameFolder(f)} title="Ganti nama"
+                  className="text-zinc-500 hover:text-orange-400">✎</button>
+                <button onClick={() => deleteFolder(f)} title="Hapus folder"
+                  className="text-zinc-500 hover:text-red-400">🗑</button>
+              </span>
+            )}
+          </span>
+        ))}
+        <button onClick={() => { setActiveFolder("none"); setPage(1); }}
+          className={`rounded-lg px-3 py-1.5 border transition ${
+            activeFolder === "none" ? "border-orange-500 bg-orange-600/10 text-orange-300" : "border-zinc-800 bg-zinc-900 hover:border-zinc-600"
+          }`}>
+          Tanpa Folder
+        </button>
       </div>
 
       {/* Filter bar */}
@@ -279,6 +386,10 @@ export default function KoleksiPage() {
             className="bg-orange-600 hover:bg-orange-500 rounded-lg px-4 py-2 text-sm font-semibold">
             Kirim ke Live →
           </button>
+          <button onClick={() => setShowMove(true)}
+            className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg px-4 py-2 text-sm font-semibold">
+            📁 Pindah Folder
+          </button>
           <button onClick={() => setSelected(new Set())} className="text-zinc-400 text-sm hover:text-zinc-100">
             Batal
           </button>
@@ -360,6 +471,56 @@ export default function KoleksiPage() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal tambah folder */}
+      {showFolder && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowFolder(false)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-bold text-lg mb-2">Tambah Folder</h2>
+            <p className="text-zinc-400 text-sm mb-4">
+              Folder dipakai untuk memisahkan produk di koleksi, mis. per kategori atau per host.
+            </p>
+            <input autoFocus placeholder="Nama folder…" value={folderName}
+              onChange={(e) => setFolderName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") createFolder(); }}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-orange-500" />
+            <div className="flex gap-2 justify-end mt-5">
+              <button onClick={() => setShowFolder(false)} className="px-4 py-2 text-sm text-zinc-400">Batal</button>
+              <button onClick={createFolder} disabled={!folderName.trim()}
+                className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 rounded-lg px-4 py-2 text-sm font-semibold">
+                Buat Folder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal pindah folder */}
+      {showMove && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowMove(false)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-bold text-lg mb-4">Pindahkan {selected.size} produk ke folder</h2>
+            <div className="space-y-2">
+              {folders.map((f) => (
+                <button key={f.id} onClick={() => moveToFolder(f.id)}
+                  className="w-full text-left border border-zinc-700 hover:border-orange-500 hover:bg-orange-600/10 rounded-lg px-4 py-2.5 text-sm transition">
+                  📁 {f.name} <span className="text-zinc-500">({f.count})</span>
+                </button>
+              ))}
+              <button onClick={() => moveToFolder(null)}
+                className="w-full text-left border border-zinc-700 hover:border-orange-500 hover:bg-orange-600/10 rounded-lg px-4 py-2.5 text-sm transition text-zinc-400">
+                Tanpa Folder (keluarkan dari folder)
+              </button>
+              {folders.length === 0 && (
+                <p className="text-zinc-500 text-sm">Belum ada folder. Buat dulu lewat tombol &quot;📁 Tambah Folder&quot;.</p>
+              )}
+            </div>
+            <div className="flex justify-end mt-5">
+              <button onClick={() => setShowMove(false)} className="px-4 py-2 text-sm text-zinc-400">Batal</button>
+            </div>
           </div>
         </div>
       )}
