@@ -11,6 +11,7 @@ export async function GET(req: Request) {
   const tag = (url.searchParams.get("tag") || "").trim();
   const sent = url.searchParams.get("sent"); // "yes" | "no" | null
   const minComm = Number(url.searchParams.get("minComm")) || 0;
+  const sort = url.searchParams.get("sort") || ""; // trend | sold30d | komisi | rating
   const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
   const pageSize = Math.min(100, Number(url.searchParams.get("pageSize")) || 24);
 
@@ -22,11 +23,18 @@ export async function GET(req: Request) {
     ...(sent === "no" ? { assignments: { none: {} } } : {}),
   };
 
+  const orderBy =
+    sort === "trend" ? { product: { trend: "desc" as const } } :
+    sort === "sold30d" ? { product: { sold30d: "desc" as const } } :
+    sort === "komisi" ? { product: { commissionRate: "desc" as const } } :
+    sort === "rating" ? { product: { rating: "desc" as const } } :
+    { addedAt: "desc" as const };
+
   const [total, entries] = await Promise.all([
     db.collectionEntry.count({ where }),
     db.collectionEntry.findMany({
       where,
-      orderBy: { addedAt: "desc" },
+      orderBy,
       skip: (page - 1) * pageSize,
       take: pageSize,
       include: {
@@ -60,6 +68,9 @@ export async function GET(req: Request) {
         price: e.product.price,
         commissionRate: e.product.commissionRate,
         sold: e.product.sold,
+        sold30d: e.product.sold30d,
+        rating: e.product.rating,
+        trend: e.product.trend,
         source: e.product.source,
       },
       sentTo: e.assignments.map((a) =>
@@ -128,6 +139,16 @@ export async function DELETE(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   const body = await req.json().catch(() => ({}));
+
+  // Reset seluruh koleksi. Produk yang pernah dipakai di sesi live tetap
+  // disimpan (riwayat live aman); sisanya ikut terhapus. Hasil riset ulang
+  // dari extension akan mengisi Koleksi lagi.
+  if (body.all === true) {
+    const removedEntries = await db.collectionEntry.deleteMany({});
+    await db.product.deleteMany({ where: { sessionItems: { none: {} } } });
+    return NextResponse.json({ ok: true, removed: removedEntries.count });
+  }
+
   const ids: string[] = Array.isArray(body.ids) ? body.ids : [];
   await db.collectionEntry.deleteMany({ where: { id: { in: ids } } });
   return NextResponse.json({ ok: true });

@@ -66,39 +66,13 @@
     };
   }
 
-  function sendCapture(products) {
-    if (!products.length) return;
-    try {
-      chrome.runtime.sendMessage({
-        type: "CAPTURE",
-        capture: {
-          kind: "search",
-          url: location.href,
-          page_url: location.href,
-          payload: { data: { list: products } },
-          captured_at: new Date().toISOString(),
-        },
-        products: products.map((p) => ({
-          key: p.key,
-          itemId: p.itemId,
-          shopId: p.shopId,
-          name: p.name,
-          price: p.price,
-          commissionRate: p.commissionRate,
-          estimatedCommission: p.estimatedCommission,
-        })),
-      });
-    } catch {
-      /* ok */
-    }
-  }
-
   function publishResult(result) {
     if (!result) return;
     const { R, UI } = getModules();
     if (!R || !UI) return;
     UI.onSearchResult(result);
-    sendCapture(R.getProducts());
+    // Hasil riset TIDAK dikirim otomatis ke dashboard — hanya lewat tombol
+    // "kirim ke dashboard" di modal detail (research-ui sendToDashboard).
   }
 
   function ensureVisiblePanel(keyword, statusText) {
@@ -199,8 +173,16 @@
       // Affiliate: scrape kartu DOM (komisi tampil di halaman) selama API
       // belum menangkap. mergeDomProducts sendiri berhenti bila API sudah masuk.
       if (isAffiliateHost()) {
+        // Keyword pencarian portal bisa berubah tanpa URL berubah (SPA) —
+        // deteksi dari kotak pencarian dan reset akumulasi bila ganti.
+        const kw = R.getKeywordFromPage();
+        const prevKw = R.state.keyword;
+        R.resetIfNewKeyword(kw);
+        if (prevKw && R.state.keyword !== prevKw) {
+          UI.updatePanel(R.computeStats(R.getProducts()), R.state.keyword);
+        }
         const domItems = R.scrapeAffiliateDOM();
-        const result = R.mergeDomProducts(domItems, R.getKeywordFromPage());
+        const result = R.mergeDomProducts(domItems, R.state.keyword);
         if (result) UI.updatePanel(result.stats, result.keyword);
         return;
       }

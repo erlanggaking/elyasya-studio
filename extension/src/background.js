@@ -432,7 +432,143 @@ async function commissionLookup(itemIds, keyword) {
   return { ok: true, rates };
 }
 
+// ---- Watcher live: ambil play url / metrik sesi dari browser -----------------
+// API live.shopee.co.id/api/v1/session/* diblokir anti-bot untuk server, tapi
+// bisa diakses dari extension (cookie + fingerprint browser asli), TANPA buka
+// tab. Tiap menit: tanya server sesi live mana yang dipantau → fetch detail →
+// setor play_url + viewer via live/sync.
+
+const LIVE_WATCH_ALARM = "elyasya-live-watch";
+
+function findPlayUrlDeep(node, depth = 0, seen = new Set()) {
+  if (!node || depth > 7) return "";
+  if (typeof node === "string") {
+    return /^https?:\/\/[^ ]+\.(flv|m3u8)(\?|$)/i.test(node) ? node : "";
+  }
+  if (typeof node !== "object" || seen.has(node)) return "";
+  seen.add(node);
+  for (const k in node) {
+    if (/play/i.test(k)) {
+      const r = findPlayUrlDeep(node[k], depth + 1, seen);
+      if (r) return r;
+    }
+  }
+  for (const k in node) {
+    const r = findPlayUrlDeep(node[k], depth + 1, seen);
+    if (r) return r;
+  }
+  return "";
+}
+
+function findNumDeep(node, keyRe, depth = 0, seen = new Set()) {
+  if (!node || typeof node !== "object" || depth > 6 || seen.has(node)) return 0;
+  seen.add(node);
+  for (const k in node) {
+    if (keyRe.test(k)) {
+      const n = Number(node[k]);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  }
+  for (const k in node) {
+    const r = findNumDeep(node[k], keyRe, depth + 1, seen);
+    if (r) return r;
+  }
+  return 0;
+}
+
+async function watchLiveSessions() {
+  const config = await getConfig();
+  if (!config.token || !config.enabled) return;
+
+  let watched = [];
+  try {
+    const res = await fetch(`${config.apiUrl}/api/extension/live/watch`, {
+      headers: { Authorization: `Bearer ${config.token}` },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!data.ok || !Array.isArray(data.sessions)) return;
+    watched = data.sessions;
+  } catch {
+    return;
+  }
+
+  const updates = [];
+  for (const s of watched.slice(0, 5)) {
+    try {
+      const res = await fetch(
+        `https://live.shopee.co.id/api/v1/session/${encodeURIComponent(s.session_id)}`,
+        {
+          credentials: "include",
+          headers: {
+            Accept: "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            Referer: `https://live.shopee.co.id/share?from=live&session=${s.session_id}`,
+          },
+        }
+      );
+      const d = await res.json().catch(() => null);
+      if (!d || (d.err_code != null && d.err_code !== 0 && !d.data)) continue;
+      const playUrl = findPlayUrlDeep(d);
+      const viewers = findNumDeep(d, /^(ccu|viewer|online_count|member_cnt)/i);
+      const likes = findNumDeep(d, /^(like_cnt|likes|total_like)/i);
+      if (!playUrl && !viewers) continue;
+      updates.push({
+        session_id: String(s.session_id),
+        play_url: playUrl,
+        viewers,
+        likes,
+      });
+    } catch {
+      /* skip sesi ini */
+    }
+  }
+  if (updates.length) await syncLiveSessions(updates);
+}
+
+// ---- Pencarian shopee.co.id dari background ---------------------------------
+// Dipakai research-core untuk melengkapi produk portal affiliate dengan data
+// penuh (rating, ulasan, ctime, stok, penjualan bulanan → tren). Background
+// punya host_permissions shopee.co.id sehingga cookie user ikut terkirim.
+async function shopeeSearch(keyword, newest = 0, limit = 60) {
+  const kw = String(keyword || "").trim();
+  if (!kw) return { ok: false, error: "keyword kosong" };
+  const params = new URLSearchParams({
+    by: "relevancy",
+    keyword: kw,
+    limit: String(Math.min(60, Number(limit) || 60)),
+    newest: String(Math.max(0, Number(newest) || 0)),
+    order: "desc",
+    page_type: "search",
+    scenario: "PAGE_GLOBAL_SEARCH",
+    version: "2",
+  });
+  try {
+    const res = await fetch(`https://shopee.co.id/api/v4/search/search_items?${params}`, {
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "X-API-SOURCE": "pc",
+        "X-Shopee-Language": "id",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+    });
+    if (!res.ok) return { ok: false, status: res.status };
+    const body = await res.json().catch(() => null);
+    if (!body) return { ok: false, error: "bukan JSON" };
+    return { ok: true, body };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "network error" };
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === "SHOPEE_SEARCH") {
+    shopeeSearch(msg.keyword, msg.newest, msg.limit)
+      .then(sendResponse)
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+
   if (msg.type === "ENABLE_CAPTURE") {
     enableCaptureForTab(_sender.tab?.id)
       .then(sendResponse)
@@ -571,9 +707,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === SYNC_ALARM) syncNow(false);
+  if (alarm.name === LIVE_WATCH_ALARM) watchLiveSessions();
 });
 
 chrome.runtime.onInstalled.addListener(async () => {
   chrome.alarms.create(SYNC_ALARM, { periodInMinutes: 1 });
+  chrome.alarms.create(LIVE_WATCH_ALARM, { periodInMinutes: 1 });
   await getDeviceId();
 });

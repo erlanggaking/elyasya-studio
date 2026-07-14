@@ -22,7 +22,7 @@ export async function POST(
   if (account) {
     try {
       await endSession(
-        { accessToken: account.accessToken, shopId: account.shopId },
+        { accessToken: account.accessToken, shopId: account.shopId, userId: account.userId },
         session.shopeeSessionId
       );
     } catch (err) {

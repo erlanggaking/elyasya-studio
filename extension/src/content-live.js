@@ -54,6 +54,31 @@
     return null;
   }
 
+  // Cari URL stream playable (.flv/.m3u8) di mana pun dalam JSON — dipakai
+  // player panel dashboard (partner API tidak memberi URL yang valid untuk
+  // live yang disiarkan dari aplikasi HP).
+  function findPlayUrl(node, depth = 0, seen = new Set()) {
+    if (!node || depth > 9) return null;
+    if (typeof node === "string") {
+      if (/^https?:\/\/[^ ]+\.(flv|m3u8)(\?|$)/i.test(node)) return node;
+      return null;
+    }
+    if (typeof node !== "object" || seen.has(node)) return null;
+    seen.add(node);
+    // Prioritaskan field bernama *play*
+    for (const k in node) {
+      if (/play/i.test(k)) {
+        const r = findPlayUrl(node[k], depth + 1, seen);
+        if (r) return r;
+      }
+    }
+    for (const k in node) {
+      const r = findPlayUrl(node[k], depth + 1, seen);
+      if (r) return r;
+    }
+    return null;
+  }
+
   // Cari array produk (punya itemid + price/name).
   function findProductArrays(node, depth = 0, seen = new Set(), out = []) {
     if (!node || typeof node !== "object" || depth > 9 || seen.has(node)) return out;
@@ -122,10 +147,14 @@
         comments: 0,
         shares: 0,
         url: location.href,
+        play_url: "",
         products: new Map(),
       };
       sessions.set(sid, rec);
     }
+
+    const playUrl = findPlayUrl(data);
+    if (playUrl) rec.play_url = playUrl;
 
     if (room) {
       rec.streamer_name =
@@ -155,7 +184,7 @@
 
   function flush() {
     const payload = [...sessions.values()]
-      .filter((s) => s.products.size > 0 || s.streamer_name !== "—")
+      .filter((s) => s.products.size > 0 || s.streamer_name !== "—" || s.play_url)
       .map((s) => ({
         session_id: s.session_id,
         streamer_name: s.streamer_name,
@@ -166,6 +195,7 @@
         comments: s.comments,
         shares: s.shares,
         url: s.url,
+        play_url: s.play_url,
         products: [...s.products.values()],
       }));
     if (payload.length === 0) return;

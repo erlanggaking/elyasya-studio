@@ -191,7 +191,9 @@ window.ElyasyaResearchUI = (function () {
     if (result.ok) {
       updatePanel(result.stats, R().state.keyword);
       await R().enrichAllCommissions();
+      await R().enrichFromShopee?.();
       updatePanel(R().computeStats(R().getProducts()), R().state.keyword);
+      if (document.getElementById(MODAL_ID)?.classList.contains("open")) renderModal();
     } else {
       updatePanel(R().computeStats(R().getProducts()), R().state.keyword);
       if (pages) {
@@ -615,6 +617,12 @@ window.ElyasyaResearchUI = (function () {
     await R().enrichAllCommissions();
     modalState.page = 1;
     renderModal();
+    // Lengkapi kolom yang masih "—" dari API shopee.co.id, lalu render ulang.
+    const changed = await R().enrichFromShopee?.();
+    if (changed) {
+      renderModal();
+      updatePanel(R().computeStats(R().getProducts()), R().state.keyword);
+    }
   }
 
   function closeDetailModal() {
@@ -627,6 +635,13 @@ window.ElyasyaResearchUI = (function () {
     updatePanel(result.stats, result.keyword);
     R().enrichAllCommissions().then(() => {
       updatePanel(R().computeStats(R().getProducts()), R().state.keyword);
+    });
+    // Lengkapi rating/tren/stok dari API shopee.co.id (portal affiliate saja)
+    R().enrichFromShopee?.().then((changed) => {
+      if (changed) {
+        updatePanel(R().computeStats(R().getProducts()), R().state.keyword);
+        if (document.getElementById(MODAL_ID)?.classList.contains("open")) renderModal();
+      }
     });
   }
 

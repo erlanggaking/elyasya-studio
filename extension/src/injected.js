@@ -181,6 +181,7 @@
         method: data.method || "GET",
         credentials: "include",
         headers: data.headers || { Accept: "application/json" },
+        body: data.body != null ? data.body : undefined,
       });
       const text = await res.text();
       window.postMessage(

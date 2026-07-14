@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { getActiveAccount } from "@/lib/shopee-account";
-import { getSessionMetric } from "@/lib/shopee";
+import { getSessionMetric, SHOPEE_MOCK } from "@/lib/shopee";
 
 // Polling metrik sesi live (PRD §11): proxy getSessionMetric + simpan snapshot.
 // Throttle: kalau snapshot terakhir < 20 detik lalu, balas dari DB (hemat rate limit).
@@ -27,14 +27,16 @@ export async function GET(
     return NextResponse.json({ ok: true, metrics: last ?? null, live: session.status === "live" });
   }
 
+  // Sesi hasil "tautkan link live" tidak punya akun OAuth — di mode mock tetap
+  // hasilkan metrik simulasi; di mode real balas snapshot terakhir saja.
   const account = await getActiveAccount(session.hostId);
-  if (!account) {
+  if (!account && !SHOPEE_MOCK) {
     return NextResponse.json({ ok: true, metrics: last ?? null, live: true, warning: "token" });
   }
 
   try {
     const m = await getSessionMetric(
-      { accessToken: account.accessToken, shopId: account.shopId },
+      { accessToken: account?.accessToken ?? "", shopId: account?.shopId ?? "", userId: account?.userId ?? "" },
       session.shopeeSessionId,
       session.startedAt ?? undefined
     );

@@ -10,6 +10,7 @@
   "dependencies": {
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
+    "flv.js": "^1.6.2",
     "jose": "^6.2.3",
     "next": "16.2.10",
     "prisma": "^6.19.3",

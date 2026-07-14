@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
+import { pushPendingAssignments } from "@/lib/live-cart";
 
 // Bulk action Koleksi → kirim ke studio dan/atau host (PRD §7.3).
 // Item tetap di Koleksi; hanya membuat Assignment (many-to-many).
@@ -46,5 +47,13 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, created });
+  // Host yang sedang live: produk kiriman langsung masuk keranjang live-nya
+  // (tanpa perlu pin manual satu-satu — pin tetap untuk menyorot produk).
+  let pushedLive = 0;
+  for (const hostId of hostIds) {
+    const r = await pushPendingAssignments(hostId);
+    pushedLive += r.pushed;
+  }
+
+  return NextResponse.json({ ok: true, created, pushedLive });
 }

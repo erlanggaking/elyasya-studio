@@ -62,6 +62,13 @@ model Host {
   name           String
   note           String          @default("")
   contact        String          @default("")
+  // Username akun live Shopee host — dipakai auto-tautkan sesi live yang
+  // terdeteksi extension (tanpa perlu copy-paste link share tiap live).
+  liveUsername   String          @default("")
+  // Link share live host (disimpan sekali saat setup) + uid streamer hasil
+  // resolve — dipakai auto-deteksi live berikutnya tanpa paste link lagi.
+  liveShareLink  String          @default("")
+  liveUid        String          @default("")
   studioId       String?
   studio         Studio?         @relation(fields: [studioId], references: [id], onDelete: SetNull)
   createdAt      DateTime        @default(now())
@@ -75,6 +82,9 @@ model ShopeeAccount {
   hostId         String
   host           Host      @relation(fields: [hostId], references: [id], onDelete: Cascade)
   shopId         String
+  // user_id streamer dari callback authorize — WAJIB untuk semua endpoint
+  // /api/v2/livestream/* (signature & query pakai user_id, bukan shop_id).
+  userId         String    @default("")
   shopName       String    @default("")
   accessToken    String    @default("")
   refreshToken   String    @default("")
@@ -95,6 +105,9 @@ model Product {
   price          Float             @default(0)
   commissionRate Float             @default(0) // persen, mis. 5.5
   sold           Int               @default(0)
+  sold30d        Int               @default(0) // penjualan 30 hari terakhir
+  rating         Float             @default(0) // bintang 0-5
+  trend          Float             @default(0) // % perubahan penjualan 30 hari
   revenue        Float             @default(0)
   source         String            @default("extension") // extension | manual
   firstSeenAt    DateTime          @default(now())
@@ -142,6 +155,7 @@ model LiveSession {
   pushUrl         String            @default("")
   pushKey         String            @default("")
   shareUrl        String            @default("")
+  playUrl         String            @default("") // stream FLV dari get_session_detail — dipakai player panel
   startedAt       DateTime?
   endedAt         DateTime?
   createdAt       DateTime          @default(now())

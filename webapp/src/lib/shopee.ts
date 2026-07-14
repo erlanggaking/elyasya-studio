@@ -21,8 +21,9 @@ export const SHOPEE_MOCK = !PARTNER_ID || !PARTNER_KEY;
 
 // ---------- Signature & transport (mode REAL) --------------------------------
 
-function sign(path: string, timestamp: number, accessToken = "", shopId = "") {
-  const base = `${PARTNER_ID}${path}${timestamp}${accessToken}${shopId}`;
+function sign(path: string, timestamp: number, accessToken = "", idValue = "") {
+  // idValue: shop_id untuk API shop, user_id untuk API livestream.
+  const base = `${PARTNER_ID}${path}${timestamp}${accessToken}${idValue}`;
   return crypto.createHmac("sha256", PARTNER_KEY).update(base).digest("hex");
 }
 
@@ -32,23 +33,28 @@ async function callShopee(
     method = "POST",
     accessToken = "",
     shopId = "",
+    userId = "",
     body,
     query = {},
   }: {
     method?: "GET" | "POST";
     accessToken?: string;
     shopId?: string;
+    userId?: string;
     body?: unknown;
     query?: Record<string, string | number>;
   }
 ) {
   const timestamp = Math.floor(Date.now() / 1000);
+  // Endpoint /api/v2/livestream/* memakai user_id streamer (signature & query);
+  // endpoint shop biasa memakai shop_id. Kalau userId terisi, itu yang dipakai.
+  const idValue = userId || shopId;
   const params = new URLSearchParams({
     partner_id: PARTNER_ID,
     timestamp: String(timestamp),
-    sign: sign(path, timestamp, accessToken, shopId),
+    sign: sign(path, timestamp, accessToken, idValue),
     ...(accessToken ? { access_token: accessToken } : {}),
-    ...(shopId ? { shop_id: shopId } : {}),
+    ...(userId ? { user_id: userId } : shopId ? { shop_id: shopId } : {}),
     ...Object.fromEntries(Object.entries(query).map(([k, v]) => [k, String(v)])),
   });
   const res = await fetch(`${API_BASE}${path}?${params}`, {
@@ -158,7 +164,7 @@ export function mockMetrics(sessionId: string, startedAt: Date) {
 
 // ---------- LiveStream API ----------------------------------------------------
 
-export type ShopeeCtx = { accessToken: string; shopId: string };
+export type ShopeeCtx = { accessToken: string; shopId: string; userId?: string };
 
 export async function createSession(
   ctx: ShopeeCtx,
@@ -170,6 +176,7 @@ export async function createSession(
   return callShopee("/api/v2/livestream/create_session", {
     accessToken: ctx.accessToken,
     shopId: ctx.shopId,
+    userId: ctx.userId ?? "",
     body: {
       title,
       cover_image_url: coverImageUrl || "https://placehold.co/720x1280",
@@ -195,12 +202,14 @@ export async function startSession(ctx: ShopeeCtx, sessionId: string | number) {
     method: "GET",
     accessToken: ctx.accessToken,
     shopId: ctx.shopId,
+    userId: ctx.userId ?? "",
     query: { session_id: sessionId },
   });
   const domainId = detail?.stream_url_list?.domain_id ?? 1;
   await callShopee("/api/v2/livestream/start_session", {
     accessToken: ctx.accessToken,
     shopId: ctx.shopId,
+    userId: ctx.userId ?? "",
     body: { session_id: Number(sessionId), domain_id: domainId },
   });
   return {
@@ -210,11 +219,25 @@ export async function startSession(ctx: ShopeeCtx, sessionId: string | number) {
   };
 }
 
+export async function getSessionDetail(ctx: ShopeeCtx, sessionId: string | number) {
+  if (SHOPEE_MOCK) {
+    return { session_id: Number(sessionId), status: 1 };
+  }
+  return callShopee("/api/v2/livestream/get_session_detail", {
+    method: "GET",
+    accessToken: ctx.accessToken,
+    shopId: ctx.shopId,
+    userId: ctx.userId ?? "",
+    query: { session_id: sessionId },
+  });
+}
+
 export async function endSession(ctx: ShopeeCtx, sessionId: string | number) {
   if (SHOPEE_MOCK) return { ok: true };
   return callShopee("/api/v2/livestream/end_session", {
     accessToken: ctx.accessToken,
     shopId: ctx.shopId,
+    userId: ctx.userId ?? "",
     body: { session_id: Number(sessionId) },
   });
 }
@@ -228,6 +251,7 @@ export async function addItemList(
   return callShopee("/api/v2/livestream/add_item_list", {
     accessToken: ctx.accessToken,
     shopId: ctx.shopId,
+    userId: ctx.userId ?? "",
     body: { session_id: Number(sessionId), item_list: items },
   });
 }
@@ -241,6 +265,7 @@ export async function deleteItemList(
   return callShopee("/api/v2/livestream/delete_item_list", {
     accessToken: ctx.accessToken,
     shopId: ctx.shopId,
+    userId: ctx.userId ?? "",
     body: { session_id: Number(sessionId), item_list: items },
   });
 }
@@ -254,6 +279,7 @@ export async function updateItemList(
   return callShopee("/api/v2/livestream/update_item_list", {
     accessToken: ctx.accessToken,
     shopId: ctx.shopId,
+    userId: ctx.userId ?? "",
     body: { session_id: Number(sessionId), item_list: items },
   });
 }
@@ -267,6 +293,7 @@ export async function updateShowItem(
   return callShopee("/api/v2/livestream/update_show_item", {
     accessToken: ctx.accessToken,
     shopId: ctx.shopId,
+    userId: ctx.userId ?? "",
     body: { session_id: Number(sessionId), ...item },
   });
 }
@@ -283,6 +310,7 @@ export async function getSessionMetric(
     method: "GET",
     accessToken: ctx.accessToken,
     shopId: ctx.shopId,
+    userId: ctx.userId ?? "",
     query: { session_id: sessionId },
   });
 }

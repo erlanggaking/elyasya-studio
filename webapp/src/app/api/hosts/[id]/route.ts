@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { tokenStatus } from "@/lib/shopee-account";
+import { resolveShareLink } from "@/lib/shopee-live";
+import { pushPendingAssignments } from "@/lib/live-cart";
 
 export async function GET(
   _req: Request,
@@ -56,16 +58,56 @@ export async function PATCH(
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
+
+  // Setup link live (sekali): resolve → simpan uid streamer, dan langsung
+  // tautkan sesi yang ada di link (host baru saja share = sedang live).
+  let liveExtra: { liveShareLink?: string; liveUid?: string } = {};
+  let autoLinked = false;
+  if (body.liveShareLink !== undefined) {
+    const link = String(body.liveShareLink).trim();
+    liveExtra = { liveShareLink: link };
+    if (link) {
+      const r = await resolveShareLink(link);
+      if (r.uid) liveExtra.liveUid = r.uid;
+      if (r.sessionId) {
+        const hostRow = await db.host.findUnique({ where: { id } });
+        const known = await db.liveSession.findFirst({
+          where: { hostId: id, shopeeSessionId: r.sessionId },
+        });
+        const activeOther = await db.liveSession.findFirst({
+          where: { hostId: id, status: "live" },
+        });
+        if (!known && !activeOther && hostRow) {
+          await db.liveSession.create({
+            data: {
+              shopeeSessionId: r.sessionId,
+              hostId: id,
+              studioId: hostRow.studioId,
+              status: "live",
+              title: `Live ${hostRow.name} — ${new Date().toLocaleDateString("id-ID")}`,
+              shareUrl: `https://live.shopee.co.id/share?from=live&session=${r.sessionId}`,
+              startedAt: new Date(),
+            },
+          });
+          autoLinked = true;
+          await pushPendingAssignments(id);
+        }
+      }
+    }
+  }
+
   const host = await db.host.update({
     where: { id },
     data: {
       ...(body.name ? { name: String(body.name) } : {}),
       ...(body.note !== undefined ? { note: String(body.note) } : {}),
       ...(body.contact !== undefined ? { contact: String(body.contact) } : {}),
+      ...(body.liveUsername !== undefined ? { liveUsername: String(body.liveUsername).trim() } : {}),
       ...(body.studioId !== undefined ? { studioId: body.studioId || null } : {}),
+      ...liveExtra,
     },
   });
-  return NextResponse.json({ ok: true, host });
+  return NextResponse.json({ ok: true, host, autoLinked });
 }
 
 export async function DELETE(

@@ -11,6 +11,8 @@ type RawProduct = {
   commissionRate?: number;
   soldTotal?: number;
   sold30d?: number;
+  rating?: number;
+  trend?: number;
   monthlyRevenue?: number;
   revenue30d?: number;
   [k: string]: unknown;
@@ -67,6 +69,9 @@ export async function POST(req: Request) {
         price: Number(p.price) || 0,
         commissionRate: Number(p.commissionRate) || 0,
         sold: Number(p.sold30d ?? p.soldTotal) || 0,
+        sold30d: Number(p.sold30d) || 0,
+        rating: Number(p.rating) || 0,
+        trend: Number(p.trend) || 0,
         revenue: Number(p.revenue30d ?? p.monthlyRevenue) || 0,
         rawPayload: JSON.stringify(p),
       };
@@ -80,10 +85,19 @@ export async function POST(req: Request) {
           where: { id: existing.id },
           data: {
             ...data,
-            // jangan timpa komisi yang sudah terisi dengan 0
+            // jangan timpa nilai yang sudah terisi dengan 0
             commissionRate: data.commissionRate || existing.commissionRate,
             imageUrl: data.imageUrl || existing.imageUrl,
+            rating: data.rating || existing.rating,
+            trend: Number.isFinite(Number(p.trend)) ? Number(p.trend) : existing.trend,
           },
+        });
+        // Kalau entri koleksi sudah dihapus (mis. tombol Reset), buat lagi
+        // supaya hasil riset ulang tetap muncul di Koleksi.
+        await db.collectionEntry.upsert({
+          where: { productId: existing.id },
+          create: { productId: existing.id, addedBy: auth.user.email },
+          update: {},
         });
         updated += 1;
       } else {

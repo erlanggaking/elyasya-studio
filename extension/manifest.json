@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Elyasya-Studio",
-  "version": "6.1.0",
+  "version": "6.5.0",
   "description": "Riset produk & livestream Shopee — capture via DevTools Protocol, panel riset otomatis, akumulasi halaman, analitik & sync dashboard.",
   "icons": {
     "16": "icons/icon16.png",
@@ -77,8 +77,18 @@
       "matches": [
         "https://live.shopee.co.id/*"
       ],
+      "js": ["src/injected.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://live.shopee.co.id/*"
+      ],
       "js": ["src/content-live.js"],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "all_frames": true
     }
   ]
 }

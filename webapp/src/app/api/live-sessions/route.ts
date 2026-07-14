@@ -34,7 +34,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const ctx = { accessToken: account.accessToken, shopId: account.shopId };
+    const ctx = { accessToken: account.accessToken, shopId: account.shopId, userId: account.userId };
     const createRes = await createSession(ctx, { title, coverImageUrl: body.coverImageUrl });
     const startRes = await startSession(ctx, createRes.session_id);
 

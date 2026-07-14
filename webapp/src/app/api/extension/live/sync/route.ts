@@ -16,11 +16,51 @@ export async function POST(req: Request) {
     : [];
 
   let stored = 0;
+  let linked = 0;
   for (const s of sessions) {
     const shopeeSessionId = String(s.sessionId ?? s.session_id ?? "");
     if (!shopeeSessionId) continue;
-    const existing = await db.liveSession.findFirst({ where: { shopeeSessionId } });
-    if (!existing) continue; // hanya perkaya sesi yang dikenal app (v1)
+
+    let existing = await db.liveSession.findFirst({ where: { shopeeSessionId } });
+
+    // Sesi belum dikenal → auto-tautkan ke host yang liveUsername-nya cocok
+    // dengan nama streamer (setup sekali di profil host, tanpa copy-paste link).
+    if (!existing) {
+      const streamer = String(s.streamer_name ?? s.streamerName ?? "").trim();
+      if (!streamer || streamer === "—") continue;
+      const candidates = await db.host.findMany({
+        where: { liveUsername: { not: "" } },
+        select: { id: true, name: true, studioId: true, liveUsername: true },
+      });
+      const host = candidates.find(
+        (h) => h.liveUsername.toLowerCase() === streamer.toLowerCase()
+      );
+      if (!host) continue;
+      const stillLive = await db.liveSession.findFirst({ where: { hostId: host.id, status: "live" } });
+      if (stillLive) continue; // jangan dobel — akhiri sesi lama dulu
+      existing = await db.liveSession.create({
+        data: {
+          shopeeSessionId,
+          hostId: host.id,
+          studioId: host.studioId,
+          status: "live",
+          title: String(s.title ?? `Live ${host.name}`),
+          shareUrl:
+            String(s.url ?? "") ||
+            `https://live.shopee.co.id/share?from=live&session=${shopeeSessionId}`,
+          startedAt: new Date(),
+        },
+      });
+      linked += 1;
+      console.log(`[live/sync] auto-link session ${shopeeSessionId} → host ${host.name}`);
+    }
+
+    // URL stream asli dari halaman live (hasil capture browser) → player panel.
+    const playUrl = String(s.play_url ?? s.playUrl ?? "");
+    if (playUrl && existing.playUrl !== playUrl && existing.status === "live") {
+      await db.liveSession.update({ where: { id: existing.id }, data: { playUrl } });
+    }
+
     const gmv = Number(s.gmv ?? 0);
     const ccu = Number(s.ccu ?? s.viewers ?? 0);
     if (gmv || ccu) {
@@ -39,5 +79,5 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, stored });
+  return NextResponse.json({ ok: true, stored, linked });
 }

@@ -11,10 +11,18 @@ window.ElyasyaResearch = (function () {
     loadedOffsets: new Set(),
     lastRequest: null,
     lastSearchUrl: "",
+    // Request offer-list affiliate terakhir yang tertangkap — dipakai tombol
+    // "halaman selanjutnya" untuk me-replay dengan nomor halaman berikutnya.
+    lastAffiliateCapture: null,
     hasMore: true,
     loading: false,
     apiCaptured: false,
   };
+
+  // Keyword default portal affiliate saat tidak ada pencarian aktif (feed
+  // "Penawaran Produk"). Dianggap wildcard: tidak pernah me-reset hasil
+  // pencarian yang sedang berjalan.
+  const AFFILIATE_DEFAULT_KW = "penawaran-affiliate";
 
   function normPrice(raw) {
     const n = Number(raw) || 0;
@@ -111,7 +119,7 @@ window.ElyasyaResearch = (function () {
 
   let fetchSeq = 0;
 
-  function mainWorldFetch(url) {
+  function mainWorldFetch(url, opts = {}) {
     return new Promise((resolve, reject) => {
       const id = `elyasya-fetch-${Date.now()}-${++fetchSeq}`;
       const timer = setTimeout(() => {
@@ -149,8 +157,9 @@ window.ElyasyaResearch = (function () {
           type: "elyasya-fetch",
           id,
           url,
-          method: "GET",
-          headers: {
+          method: opts.method || "GET",
+          body: opts.body ?? null,
+          headers: opts.headers || {
             Accept: "application/json",
             "X-API-SOURCE": "pc",
             "X-Shopee-Language": "id",
@@ -529,11 +538,12 @@ window.ElyasyaResearch = (function () {
     resetIfNewKeyword(keyword);
 
     const newest = Number(meta.newest ?? meta.offset ?? 0);
-    if (!state.loadedOffsets.has(newest)) {
-      state.loadedOffsets.add(newest);
-      mergeProducts(items);
-      state.pagesLoaded = state.loadedOffsets.size;
-    }
+    // Selalu merge — mergeProducts sudah dedup per produk. Dulu capture dengan
+    // offset yang pernah terlihat di-skip total, padahal portal affiliate
+    // sering melaporkan offset 0 untuk semua halaman → halaman 2+ hilang.
+    state.loadedOffsets.add(newest);
+    mergeProducts(items);
+    state.pagesLoaded = state.loadedOffsets.size;
 
     const limit = Number(meta.limit ?? items.length ?? 60);
     if (meta.url) state.lastSearchUrl = meta.url;
@@ -624,10 +634,16 @@ window.ElyasyaResearch = (function () {
       ".shopee-page-controller .shopee-icon-button--right:not(.shopee-icon-button--disabled)",
       'button[aria-label="Next"]:not([disabled])',
       ".shopee-icon-button.shopee-icon-button--right:not(.shopee-icon-button--disabled)",
+      // Portal affiliate memakai pagination antd
+      ".ant-pagination-next:not(.ant-pagination-disabled) button",
+      ".ant-pagination-next:not(.ant-pagination-disabled)",
+      'li[title="Next Page"]:not(.ant-pagination-disabled)',
+      'button[aria-label="Next page"]:not([disabled])',
+      '[class*="pagination"] button[aria-label*="ext"]:not([disabled])',
     ];
     for (const sel of selectors) {
       const btn = document.querySelector(sel);
-      if (btn && !btn.disabled) {
+      if (btn && !btn.disabled && !btn.getAttribute("aria-disabled")) {
         btn.click();
         return true;
       }
@@ -672,18 +688,46 @@ window.ElyasyaResearch = (function () {
     }
   }
 
+  // Baca keyword dari kotak pencarian portal affiliate (SPA — nilai pencarian
+  // tidak selalu masuk ke URL).
+  function getAffiliateSearchInput() {
+    try {
+      const inputs = document.querySelectorAll(
+        'input[type="search"], input[type="text"], input:not([type])'
+      );
+      for (const el of inputs) {
+        const hint = (
+          (el.getAttribute("placeholder") || "") +
+          " " +
+          (el.getAttribute("aria-label") || "")
+        ).toLowerCase();
+        const looksSearch = el.type === "search" || /cari|search|keyword|produk/.test(hint);
+        if (!looksSearch) continue;
+        const v = (el.value || "").trim();
+        if (v) return v;
+      }
+    } catch {
+      /* ok */
+    }
+    return "";
+  }
+
   function getKeywordFromPage() {
     try {
       const u = new URL(location.href);
       const kw = (
         u.searchParams.get("keyword") ??
         u.searchParams.get("q") ??
+        u.searchParams.get("search") ??
         ""
       ).trim();
       if (kw) return kw;
-      // Di affiliate portal keyword sering kosong (feed "Penawaran Produk").
-      // Pakai keyword tetap agar panel aktif & akumulasi antar-halaman tak ter-reset.
-      if (isAffiliatePage()) return "penawaran-affiliate";
+      if (isAffiliatePage()) {
+        // Nilai kotak pencarian dulu; kalau kosong berarti feed penawaran biasa.
+        const domKw = getAffiliateSearchInput();
+        if (domKw) return domKw;
+        return AFFILIATE_DEFAULT_KW;
+      }
       return "";
     } catch {
       return "";
@@ -693,12 +737,16 @@ window.ElyasyaResearch = (function () {
   function resetIfNewKeyword(keyword) {
     const kw = (keyword || getKeywordFromPage()).toLowerCase();
     if (!kw) return;
+    // Capture tanpa keyword (feed/rekomendasi) jangan me-reset hasil pencarian
+    // yang sedang aktif — merge saja ke kumpulan yang ada.
+    if (kw === AFFILIATE_DEFAULT_KW && state.keyword && state.keyword !== kw) return;
     if (state.keyword && state.keyword !== kw) {
       state.products.clear();
       state.pagesLoaded = 0;
       state.loadedOffsets.clear();
       state.hasMore = true;
       state.lastRequest = null;
+      state.lastAffiliateCapture = null;
       state.apiCaptured = false;
     }
     state.keyword = kw;
@@ -910,6 +958,48 @@ window.ElyasyaResearch = (function () {
     return String(Math.round(n));
   }
 
+  // Ambil keyword pencarian dari body/param request. Hati-hati: pada GraphQL,
+  // field `query` berisi teks query GraphQL (panjang, ada kurung kurawal) —
+  // bukan keyword pencarian.
+  function extractKeywordFromRequest(rb) {
+    if (!rb || typeof rb !== "object") return "";
+    const vars = rb.variables && typeof rb.variables === "object" ? rb.variables : {};
+    const candidates = [
+      rb.keyword, rb.searchKeyword, rb.search_keyword, rb.q, rb.search,
+      vars.keyword, vars.searchKeyword, vars.search_keyword, vars.query,
+      rb.query,
+    ];
+    for (const c of candidates) {
+      if (typeof c === "string") {
+        const s = c.trim();
+        if (s && s.length <= 64 && !s.includes("{") && !s.includes("\n")) return s;
+      }
+    }
+    return "";
+  }
+
+  // Hitung offset (newest) & limit dari param request, apa pun gaya
+  // penamaannya (newest/offset gaya shopee.co.id, atau page/pageSize gaya
+  // portal affiliate — termasuk di dalam variables GraphQL).
+  function metaFromRequest(rb, itemCount) {
+    const vars = rb && typeof rb.variables === "object" ? rb.variables : {};
+    const v = { ...vars, ...(rb && typeof rb === "object" ? rb : {}) };
+    const limit =
+      Number(
+        v.limit ?? v.pageSize ?? v.page_size ?? v.size ?? v.page_limit ??
+        vars.limit ?? vars.pageSize
+      ) || itemCount || 20;
+    let newest = Number(v.newest ?? v.offset ?? v.page_offset ?? v.from ?? v.start ?? NaN);
+    if (!Number.isFinite(newest)) {
+      const page = Number(
+        v.page ?? v.pageNo ?? v.page_no ?? v.pageIndex ?? v.page_index ??
+        v.pageNum ?? v.current ?? NaN
+      );
+      newest = Number.isFinite(page) && page > 0 ? (page - 1) * limit : 0;
+    }
+    return { newest, limit };
+  }
+
   function handleSearchCapture(msg) {
     if (!isPrimarySearchCapture(msg)) return null;
 
@@ -920,25 +1010,110 @@ window.ElyasyaResearch = (function () {
     }
 
     const items = extractItems(msg.body);
-    const keyword =
-      msg.requestBody?.keyword ??
-      msg.requestBody?.query ??
-      getKeywordFromPage();
-    const newest = Number(
-      msg.requestBody?.newest ??
-        msg.requestBody?.offset ??
-        msg.requestBody?.page_offset ??
-        0
-    );
+    const keyword = extractKeywordFromRequest(msg.requestBody) || getKeywordFromPage();
+    const { newest, limit } = metaFromRequest(msg.requestBody, items.length);
+
+    // Simpan request offer affiliate terakhir untuk replay "halaman selanjutnya".
+    if (isAffiliatePage() && msg.url) {
+      state.lastAffiliateCapture = { url: msg.url, requestBody: msg.requestBody };
+    }
 
     return ingestProducts(items, {
       keyword,
       newest,
-      limit: Number(msg.requestBody?.limit ?? msg.requestBody?.page_limit ?? 60),
+      limit,
       url: msg.url,
       requestBody: msg.requestBody,
       body: msg.body,
     });
+  }
+
+  // Naikkan parameter halaman pada objek param request (page+1, atau
+  // offset+limit). Return objek baru, atau null bila tidak ada param halaman.
+  function bumpPageInParams(src) {
+    if (!src || typeof src !== "object") return null;
+    const PAGE_KEYS = ["page", "pageNo", "page_no", "pageIndex", "page_index", "pageNum", "current"];
+    const OFFSET_KEYS = ["offset", "newest", "from", "start", "page_offset"];
+    const LIMIT_KEYS = ["limit", "pageSize", "page_size", "size", "page_limit"];
+    const out = { ...src };
+    for (const k of PAGE_KEYS) {
+      if (out[k] != null && Number.isFinite(Number(out[k]))) {
+        out[k] = Number(out[k]) + 1;
+        return out;
+      }
+    }
+    let limit = 20;
+    for (const k of LIMIT_KEYS) {
+      if (out[k] != null && Number(out[k]) > 0) {
+        limit = Number(out[k]);
+        break;
+      }
+    }
+    for (const k of OFFSET_KEYS) {
+      if (out[k] != null && Number.isFinite(Number(out[k]))) {
+        out[k] = Number(out[k]) + limit;
+        return out;
+      }
+    }
+    return null;
+  }
+
+  // Portal affiliate: replay request offer-list terakhir dengan halaman
+  // berikutnya (GET → naikkan param di URL; GraphQL POST → naikkan variables).
+  async function replayAffiliateNext() {
+    const cap = state.lastAffiliateCapture;
+    if (!cap || !cap.url) return null;
+    const rb = cap.requestBody;
+    const isGraphql =
+      rb && typeof rb === "object" && typeof rb.query === "string" && rb.query.includes("{");
+
+    try {
+      if (isGraphql) {
+        const vars = rb.variables && typeof rb.variables === "object" ? rb.variables : {};
+        const bumpedVars = bumpPageInParams(vars);
+        if (!bumpedVars) return null;
+        const nextBody = { ...rb, variables: bumpedVars };
+        const data = await mainWorldFetch(cap.url, {
+          method: "POST",
+          body: JSON.stringify(nextBody),
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+        });
+        const items = extractItems(data || {});
+        if (!items.length) return null;
+        state.lastAffiliateCapture = { url: cap.url, requestBody: nextBody };
+        const { newest, limit } = metaFromRequest(nextBody, items.length);
+        return ingestProducts(items, {
+          keyword: state.keyword,
+          newest,
+          limit,
+          url: cap.url,
+          requestBody: nextBody,
+          body: data,
+        });
+      }
+
+      const u = new URL(cap.url, location.origin);
+      const params = Object.fromEntries(u.searchParams.entries());
+      const bumped = bumpPageInParams(params);
+      if (!bumped) return null;
+      for (const [k, val] of Object.entries(bumped)) u.searchParams.set(k, String(val));
+      const nextUrl = u.toString();
+      const data = await mainWorldFetch(nextUrl);
+      const items = extractItems(data || {});
+      if (!items.length) return null;
+      state.lastAffiliateCapture = { url: nextUrl, requestBody: bumped };
+      const { newest, limit } = metaFromRequest(bumped, items.length);
+      return ingestProducts(items, {
+        keyword: state.keyword,
+        newest,
+        limit,
+        url: nextUrl,
+        requestBody: bumped,
+        body: data,
+      });
+    } catch {
+      return null;
+    }
   }
 
   async function fetchNextPage() {
@@ -955,11 +1130,22 @@ window.ElyasyaResearch = (function () {
       return { ok: false, error: "Semua halaman sudah dimuat" };
     }
 
-    // Portal affiliate: tak ada endpoint search shopee.co.id. Picu lazy-load /
-    // pagination affiliate lalu tunggu respons ter-intercept & terakumulasi.
+    // Portal affiliate: replay request offer-list terakhir dengan halaman
+    // berikutnya. Fallback: klik pagination portal & tunggu intercept.
     if (isAffiliatePage()) {
       state.loading = true;
       const before = state.products.size;
+
+      const replayed = await replayAffiliateNext();
+      if (replayed) {
+        state.loading = false;
+        return {
+          ok: true,
+          stats: replayed.stats,
+          pageCount: replayed.pageCount,
+        };
+      }
+
       clickShopeeNextPage();
       const gotMore = await waitForMoreProducts(before, 12000);
       state.loading = false;
@@ -1083,6 +1269,66 @@ window.ElyasyaResearch = (function () {
     return computeStats(list);
   }
 
+  // Data offer portal affiliate tidak membawa rating/ulasan/ctime/stok/penjualan
+  // bulanan (makanya kolom detail "—" dan tren 0%). Lengkapi dari API pencarian
+  // shopee.co.id (via background worker — punya izin host + cookie), match per
+  // itemId dengan keyword yang sama.
+  let enrichShopeeBusy = false;
+  let enrichShopeeAt = 0;
+  let enrichShopeeKw = "";
+
+  async function enrichFromShopee() {
+    if (!isAffiliatePage()) return false;
+    const keyword = state.keyword;
+    if (!keyword || keyword === AFFILIATE_DEFAULT_KW) return false;
+
+    const needing = getProducts().filter((p) => !p.rating || !p.ctime);
+    if (!needing.length) return false;
+
+    if (enrichShopeeBusy) return false;
+    const now = Date.now();
+    if (keyword === enrichShopeeKw && now - enrichShopeeAt < 8000) return false;
+    enrichShopeeBusy = true;
+    enrichShopeeAt = now;
+    enrichShopeeKw = keyword;
+
+    let changed = 0;
+    try {
+      const wanted = new Map(); // itemId -> key produk kita
+      for (const p of needing) wanted.set(String(p.itemId), p.key);
+
+      for (let pageIdx = 0; pageIdx < 3 && wanted.size > 0; pageIdx += 1) {
+        const res = await chrome.runtime.sendMessage({
+          type: "SHOPEE_SEARCH",
+          keyword,
+          newest: pageIdx * 60,
+          limit: 60,
+        });
+        if (!res?.ok || !res.body) break;
+        const items = extractItems(res.body);
+        if (!items.length) break;
+
+        for (const item of items) {
+          const key = wanted.get(String(item.itemId));
+          if (!key) continue;
+          const existing = state.products.get(key);
+          if (!existing) continue;
+          const merged = mergeProductData(existing, item);
+          merged.key = key; // jaga key asli (shopId dari portal bisa "0")
+          merged._dom = false; // sudah berisi data API — jangan ikut purge DOM
+          state.products.set(key, merged);
+          wanted.delete(String(item.itemId));
+          changed += 1;
+        }
+        if (getNoMore(res.body)) break;
+      }
+    } catch {
+      /* background tak tersedia / Shopee menolak — biarkan data apa adanya */
+    }
+    enrichShopeeBusy = false;
+    return changed > 0;
+  }
+
   function applyCommissionUpdates(updates) {
     for (const [key, rate] of updates) {
       const p = state.products.get(key);
@@ -1106,6 +1352,7 @@ window.ElyasyaResearch = (function () {
     handleSearchCapture,
     fetchNextPage,
     enrichAllCommissions,
+    enrichFromShopee,
     enrichCommissions,
     applyCommissionUpdates,
     getProducts,
