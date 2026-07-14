@@ -32,6 +32,8 @@ export default function SettingPage() {
   const [msg, setMsg] = useState("");
   const [showNewHost, setShowNewHost] = useState(false);
   const [newHost, setNewHost] = useState({ name: "", contact: "", note: "" });
+  const [editHost, setEditHost] = useState<Host | null>(null);
+  const [editHostForm, setEditHostForm] = useState({ name: "", contact: "", note: "" });
 
   const pageSize = 25;
 
@@ -124,6 +126,28 @@ export default function SettingPage() {
     if (r.ok) {
       setShowNewHost(false);
       setNewHost({ name: "", contact: "", note: "" });
+      loadHosts();
+    } else setMsg(`❌ ${r.error}`);
+  }
+
+  function openEditHost(h: Host) {
+    setEditHost(h);
+    setEditHostForm({ name: h.name, contact: h.contact, note: h.note });
+  }
+
+  async function saveEditHost() {
+    if (!editHost || !editHostForm.name.trim()) return;
+    const r = await api(`/api/hosts/${editHost.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: editHostForm.name.trim(),
+        contact: editHostForm.contact,
+        note: editHostForm.note,
+      }),
+    });
+    if (r.ok) {
+      setMsg(`✅ Host "${editHostForm.name.trim()}" diperbarui`);
+      setEditHost(null);
       loadHosts();
     } else setMsg(`❌ ${r.error}`);
   }
@@ -275,7 +299,9 @@ export default function SettingPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-zinc-400">{h.contact || "—"}</td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right space-x-3">
+                    <button onClick={() => openEditHost(h)}
+                      className="text-xs text-zinc-400 hover:text-orange-400">Edit</button>
                     <button onClick={() => deleteHost(h.id, h.name)}
                       className="text-xs text-red-400/70 hover:text-red-400">Hapus</button>
                   </td>
@@ -339,6 +365,31 @@ export default function SettingPage() {
                 disabled={!newAccount.name.trim() || !newAccount.email.trim() || newAccount.password.length < 8}
                 className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 rounded-lg px-4 py-2 text-sm font-semibold">
                 Buat Akun
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal edit host */}
+      {editHost && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setEditHost(null)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-bold text-lg mb-4">Edit Host</h2>
+            <div className="space-y-3 text-sm">
+              {([["name", "Nama host *"], ["contact", "Kontak (WA/telepon)"], ["note", "Catatan"]] as const).map(([key, label]) => (
+                <div key={key}>
+                  <label className="text-xs text-zinc-400">{label}</label>
+                  <input value={editHostForm[key]} onChange={(e) => setEditHostForm({ ...editHostForm, [key]: e.target.value })}
+                    className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500" />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end mt-5">
+              <button onClick={() => setEditHost(null)} className="px-4 py-2 text-sm text-zinc-400">Batal</button>
+              <button onClick={saveEditHost} disabled={!editHostForm.name.trim()}
+                className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 rounded-lg px-4 py-2 text-sm font-semibold">
+                Simpan
               </button>
             </div>
           </div>

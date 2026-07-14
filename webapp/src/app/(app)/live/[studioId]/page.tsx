@@ -78,6 +78,13 @@ export default function StudioDetailPage({ params }: { params: Promise<{ studioI
     }
   }
 
+  async function renameHost(h: { id: string; name: string }) {
+    const name = prompt("Nama host baru:", h.name);
+    if (name === null || !name.trim() || name.trim() === h.name) return;
+    await api(`/api/hosts/${h.id}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) });
+    load();
+  }
+
   async function removeHost(hostId: string) {
     if (!confirm("Lepas host dari studio ini?")) return;
     await api(`/api/hosts/${hostId}`, { method: "PATCH", body: JSON.stringify({ studioId: null }) });
@@ -120,9 +127,13 @@ export default function StudioDetailPage({ params }: { params: Promise<{ studioI
               return (
                 <div key={h.id} className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
                   <div className="flex items-start justify-between">
-                    <Link href={`/live/host/${h.id}`} className="font-semibold hover:text-orange-400">
-                      {h.name}
-                    </Link>
+                    <span className="flex items-center gap-1.5">
+                      <Link href={`/live/host/${h.id}`} className="font-semibold hover:text-orange-400">
+                        {h.name}
+                      </Link>
+                      <button onClick={() => renameHost(h)} title="Ganti nama host"
+                        className="text-zinc-600 hover:text-orange-400 text-xs">✎</button>
+                    </span>
                     {isLive && <span className="text-[10px] font-bold bg-red-600 rounded px-1.5 py-0.5">LIVE</span>}
                   </div>
                   <div className="text-xs mt-1">

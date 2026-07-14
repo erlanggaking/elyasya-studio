@@ -178,6 +178,15 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
         </Link>
         <div className="flex items-center gap-3 mt-1">
           <h1 className="text-2xl font-bold">{host.name}</h1>
+          <button title="Ganti nama host"
+            onClick={async () => {
+              const name = prompt("Nama host baru:", host.name);
+              if (name === null || !name.trim() || name.trim() === host.name) return;
+              const r = await api(`/api/hosts/${hostId}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) });
+              if (r.ok) { setMsg("✅ Nama host diganti"); load(); }
+              else setMsg(`❌ ${r.error}`);
+            }}
+            className="text-zinc-600 hover:text-orange-400 text-base">✎</button>
           {activeSession && <span className="text-xs font-bold bg-red-600 rounded px-2 py-1 animate-pulse">SEDANG LIVE</span>}
         </div>
         <p className="text-zinc-400 text-sm">{host.note || host.contact || "Host"}</p>
