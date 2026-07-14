@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
-import { pushPendingAssignments } from "@/lib/live-cart";
+import { probeOngoing, resolveShareLink } from "@/lib/shopee-live";
 
 // Tautkan sesi live dari link share host (PRD §7.4 alternatif tanpa OAuth):
 // host membagikan link live Shopee-nya → parse session id → jadi LiveSession
@@ -21,21 +21,6 @@ function extractSessionId(u: string): string | null {
   return null;
 }
 
-// Link share sering berupa short-link (sv.shopee.co.id / s.shopee.co.id) —
-// ikuti redirect untuk menemukan URL live final.
-async function resolveShareUrl(raw: string): Promise<string> {
-  try {
-    const res = await fetch(raw, {
-      redirect: "follow",
-      signal: AbortSignal.timeout(8000),
-      headers: { "User-Agent": "Mozilla/5.0 (Linux; Android 10) Mobile" },
-    });
-    return res.url || raw;
-  } catch {
-    return raw;
-  }
-}
-
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -53,22 +38,33 @@ export async function POST(req: Request) {
   const host = await db.host.findUnique({ where: { id: hostId } });
   if (!host) return NextResponse.json({ ok: false, error: "Host tidak ditemukan" }, { status: 404 });
 
-  let sessionId = extractSessionId(rawUrl);
-  let finalUrl = rawUrl;
-  if (!sessionId) {
-    finalUrl = await resolveShareUrl(rawUrl);
-    sessionId = extractSessionId(finalUrl);
+  const directPlayUrl = /\.(?:flv|m3u8)(?:\?|$)/i.test(rawUrl) ? rawUrl : "";
+  const resolved = directPlayUrl
+    ? { sessionId: null, uid: null, playUrl: directPlayUrl, finalUrl: rawUrl }
+    : await resolveShareLink(rawUrl);
+  let sessionId = resolved.sessionId ?? extractSessionId(rawUrl);
+  const finalUrl = resolved.finalUrl;
+  let playUrl = resolved.playUrl;
+
+  // Endpoint publik ongoing bisa memberikan URL CDN video tanpa OAuth/login.
+  if (!playUrl && resolved.uid) {
+    const ongoing = await probeOngoing(resolved.uid);
+    if (ongoing && (!sessionId || ongoing.sessionId === sessionId)) {
+      sessionId = sessionId || ongoing.sessionId;
+      playUrl = ongoing.playUrl;
+    }
   }
-  if (!sessionId) {
+
+  if (!playUrl) {
     return NextResponse.json(
-      { ok: false, error: "Session id tidak ditemukan di link. Pakai link share dari aplikasi Shopee (live.shopee.co.id/share?session=...)" },
+      { ok: false, error: "URL video tidak ditemukan. Pakai link share live yang sedang aktif atau URL stream .flv/.m3u8." },
       { status: 400 }
     );
   }
 
   // Sudah tertaut & masih live → pakai yang ada.
   const existing = await db.liveSession.findFirst({
-    where: { hostId, shopeeSessionId: sessionId, status: "live" },
+    where: { hostId, status: "live", playUrl },
   });
   if (existing) return NextResponse.json({ ok: true, session: existing, existing: true });
 
@@ -86,16 +82,17 @@ export async function POST(req: Request) {
 
   const session = await db.liveSession.create({
     data: {
-      shopeeSessionId: sessionId,
+      // Sesi ini sengaja video-only; ID kosong mencegah seluruh Partner API.
+      shopeeSessionId: "",
       hostId,
       studioId: host.studioId,
       status: "live",
       title,
       shareUrl: finalUrl,
+      playUrl,
       startedAt: new Date(),
     },
   });
-  console.log(`[audit] ${user.email} linked live session ${sessionId} host=${host.name}`);
-  await pushPendingAssignments(hostId);
+  console.log(`[audit] ${user.email} linked video-only session host=${host.name}`);
   return NextResponse.json({ ok: true, session });
 }

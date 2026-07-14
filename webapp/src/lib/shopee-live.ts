@@ -48,10 +48,11 @@ async function fetchJson(url: string): Promise<Record<string, unknown> | null> {
  */
 export async function resolveShareLink(
   raw: string
-): Promise<{ sessionId: string | null; uid: string | null; finalUrl: string }> {
-  const out: { sessionId: string | null; uid: string | null; finalUrl: string } = {
+): Promise<{ sessionId: string | null; uid: string | null; playUrl: string; finalUrl: string }> {
+  const out: { sessionId: string | null; uid: string | null; playUrl: string; finalUrl: string } = {
     sessionId: null,
     uid: null,
+    playUrl: "",
     finalUrl: raw,
   };
 
@@ -61,10 +62,11 @@ export async function resolveShareLink(
     const uid = s.match(/share_user_id(?:%3D|=)(\d{4,})/i) ?? s.match(/[?&]uid=(\d{4,})/i);
     if (sess && !out.sessionId) out.sessionId = sess[1];
     if (uid && !out.uid) out.uid = uid[1];
+    if (!out.playUrl) out.playUrl = findPlayUrlInText(s);
   };
 
   grab(raw);
-  if (out.sessionId && out.uid) return out;
+  if (out.playUrl || (out.sessionId && out.uid)) return out;
 
   const page = await fetchText(raw);
   if (page) {
@@ -75,11 +77,21 @@ export async function resolveShareLink(
   return out;
 }
 
+/** Ambil URL FLV/HLS yang sering tersimpan sebagai string JSON ter-escape. */
+export function findPlayUrlInText(text: string): string {
+  const normalized = text
+    .replace(/\\u002F/gi, "/")
+    .replace(/\\\//g, "/")
+    .replace(/&amp;/g, "&");
+  const match = normalized.match(/https?:\/\/[^\s"'<>]+?\.(?:flv|m3u8)(?:\?[^\s"'<>]*)?/i);
+  return match?.[0] ?? "";
+}
+
 /** Cari URL stream playable (.flv/.m3u8) di mana pun dalam objek. */
 export function findPlayUrl(node: unknown, depth = 0, seen = new Set<object>()): string {
   if (!node || depth > 6) return "";
   if (typeof node === "string") {
-    return /^https?:\/\/[^ ]+\.(flv|m3u8)(\?|$)/i.test(node) ? node : "";
+    return findPlayUrlInText(node);
   }
   if (typeof node !== "object" || seen.has(node as object)) return "";
   seen.add(node as object);

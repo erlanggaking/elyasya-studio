@@ -39,6 +39,9 @@ export async function POST(req: Request) {
     url?: string;
     payload?: { data?: { list?: RawProduct[] } };
     captured_at?: string;
+    // Folder Koleksi tujuan — dipilih user di extension saat "kirim ke dashboard"
+    folder_id?: string;
+    folder_name?: string;
   }> = Array.isArray(body.captures) ? body.captures : [];
 
   let created = 0;
@@ -56,6 +59,24 @@ export async function POST(req: Request) {
         update: { count: { increment: 1 }, lastSeen: new Date() },
       });
       syncedTrends += 1;
+    }
+
+    // Resolve folder tujuan: pakai id kalau masih ada; nama baru dibuatkan foldernya
+    let folderId: string | null = null;
+    if (cap.folder_id) {
+      const f = await db.collectionFolder.findUnique({ where: { id: String(cap.folder_id) } });
+      folderId = f?.id ?? null;
+    }
+    if (!folderId && cap.folder_name) {
+      const name = String(cap.folder_name).trim();
+      if (name) {
+        const f = await db.collectionFolder.upsert({
+          where: { name },
+          create: { name },
+          update: {},
+        });
+        folderId = f.id;
+      }
     }
 
     for (const p of list) {
@@ -96,8 +117,8 @@ export async function POST(req: Request) {
         // supaya hasil riset ulang tetap muncul di Koleksi.
         await db.collectionEntry.upsert({
           where: { productId: existing.id },
-          create: { productId: existing.id, addedBy: auth.user.email },
-          update: {},
+          create: { productId: existing.id, addedBy: auth.user.email, folderId },
+          update: folderId ? { folderId } : {},
         });
         updated += 1;
       } else {
@@ -106,7 +127,7 @@ export async function POST(req: Request) {
         });
         // Semua produk hasil riset otomatis masuk Koleksi (PRD §7.3)
         await db.collectionEntry.create({
-          data: { productId: product.id, addedBy: auth.user.email },
+          data: { productId: product.id, addedBy: auth.user.email, folderId },
         });
         created += 1;
         // heuristik "winning": komisi >= 5% dan terjual 30hr >= 100

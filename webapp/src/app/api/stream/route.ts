@@ -1,8 +1,15 @@
 import { getSessionUser } from "@/lib/auth";
 
-// Proxy stream FLV live Shopee → player panel (flv.js). CDN Shopee tidak
+// Proxy stream FLV/HLS live Shopee → player panel. CDN Shopee tidak selalu
 // mengirim header CORS untuk origin kita, jadi dialirkan lewat server.
 // Hanya domain streaming Shopee yang diizinkan (anti-SSRF).
+const ALLOWED_HOST_SUFFIXES = ["shopee.co.id", "shopee.com", "shopee.sg", "shopeemobile.com"];
+
+function isAllowedHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  return ALLOWED_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+}
+
 export async function GET(req: Request) {
   const user = await getSessionUser();
   if (!user) return new Response("Unauthorized", { status: 401 });
@@ -16,7 +23,7 @@ export async function GET(req: Request) {
   }
   if (
     target.protocol !== "https:" ||
-    !/(^|\.)shopee\.co\.id$/i.test(target.hostname)
+    !isAllowedHost(target.hostname)
   ) {
     return new Response("Domain tidak diizinkan", { status: 400 });
   }
@@ -25,6 +32,7 @@ export async function GET(req: Request) {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120 Safari/537.36",
       Referer: "https://live.shopee.co.id/",
+      ...(req.headers.get("range") ? { Range: req.headers.get("range")! } : {}),
     },
     signal: req.signal,
   }).catch(() => null);
@@ -33,10 +41,32 @@ export async function GET(req: Request) {
     return new Response("Stream tidak tersedia", { status: 502 });
   }
 
+  const contentType = upstream.headers.get("content-type") || "video/x-flv";
+  const isManifest = /mpegurl/i.test(contentType) || /\.m3u8(?:\?|$)/i.test(target.toString());
+  if (isManifest) {
+    const manifest = await upstream.text();
+    const rewritten = manifest
+      .split("\n")
+      .map((line) => {
+        const value = line.trim();
+        if (!value || value.startsWith("#")) return line;
+        return `/api/stream?u=${encodeURIComponent(new URL(value, target).toString())}`;
+      })
+      .join("\n");
+    return new Response(rewritten, {
+      headers: { "Content-Type": "application/vnd.apple.mpegurl", "Cache-Control": "no-store" },
+    });
+  }
+
   return new Response(upstream.body, {
+    status: upstream.status,
     headers: {
-      "Content-Type": upstream.headers.get("content-type") || "video/x-flv",
+      "Content-Type": contentType,
       "Cache-Control": "no-store",
+      "Accept-Ranges": upstream.headers.get("accept-ranges") || "bytes",
+      ...(upstream.headers.get("content-range")
+        ? { "Content-Range": upstream.headers.get("content-range")! }
+        : {}),
     },
   });
 }

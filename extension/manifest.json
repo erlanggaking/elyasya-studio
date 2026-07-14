@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Elyasya-Studio",
-  "version": "6.5.0",
+  "version": "6.6.0",
   "description": "Riset produk & livestream Shopee — capture via DevTools Protocol, panel riset otomatis, akumulasi halaman, analitik & sync dashboard.",
   "icons": {
     "16": "icons/icon16.png",
@@ -22,8 +22,13 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["src/injected.js"],
-      "matches": ["https://shopee.co.id/*", "https://*.shopee.co.id/*"]
+      "resources": [
+        "src/injected.js"
+      ],
+      "matches": [
+        "https://shopee.co.id/*",
+        "https://*.shopee.co.id/*"
+      ]
     }
   ],
   "permissions": [
@@ -60,7 +65,9 @@
         "https://shopee.co.id/*",
         "https://*.shopee.co.id/*"
       ],
-      "js": ["src/injected.js"],
+      "js": [
+        "src/injected.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     },
@@ -69,15 +76,23 @@
         "https://shopee.co.id/*",
         "https://*.shopee.co.id/*"
       ],
-      "js": ["src/research-core.js", "src/research-ui.js", "src/content.js"],
-      "css": ["src/overlay.css"],
+      "js": [
+        "src/research-core.js",
+        "src/research-ui.js",
+        "src/content.js"
+      ],
+      "css": [
+        "src/overlay.css"
+      ],
       "run_at": "document_start"
     },
     {
       "matches": [
         "https://live.shopee.co.id/*"
       ],
-      "js": ["src/injected.js"],
+      "js": [
+        "src/injected.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN",
       "all_frames": true
@@ -86,7 +101,9 @@
       "matches": [
         "https://live.shopee.co.id/*"
       ],
-      "js": ["src/content-live.js"],
+      "js": [
+        "src/content-live.js"
+      ],
       "run_at": "document_start",
       "all_frames": true
     }

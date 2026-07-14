@@ -19,7 +19,7 @@ export async function POST(
   }
 
   const account = await getActiveAccount(session.hostId);
-  if (account) {
+  if (account && session.shopeeSessionId) {
     try {
       await endSession(
         { accessToken: account.accessToken, shopId: account.shopId, userId: account.userId },

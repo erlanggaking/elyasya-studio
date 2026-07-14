@@ -46,8 +46,6 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
   const [metrics, setMetrics] = useState<Metrics>(null);
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
-  const [selectedAssignments, setSelectedAssignments] = useState<Set<string>>(new Set());
-  const [showKey, setShowKey] = useState(false);
   const [liveLink, setLiveLink] = useState("");
   const [shareLink, setShareLink] = useState("");
   const [playerKey, setPlayerKey] = useState(0);
@@ -61,19 +59,6 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
       setShareLink(r.host.liveShareLink || "");
     }
   }, [hostId]);
-
-  async function saveShareLink() {
-    const r = await api<{ autoLinked: boolean }>(`/api/hosts/${hostId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ liveShareLink: shareLink }),
-    });
-    if (r.ok) {
-      setMsg(r.autoLinked
-        ? "✅ Link tersimpan & live host langsung tertaut"
-        : "✅ Link tersimpan — live berikutnya akan terdeteksi otomatis");
-      load();
-    } else setMsg(`❌ ${r.error}`);
-  }
 
   useEffect(() => { load(); }, [load]);
 
@@ -91,8 +76,7 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
       if (stop || !r.ok) return;
       if (r.autoLinked) { setMsg("🔴 Live host terdeteksi — sesi tertaut otomatis"); load(); }
       else if (r.ended) { setMsg("Live host sudah berakhir — sesi ditutup"); setMetrics(null); load(); }
-      // Stream video tersedia (hasil capture extension) → muat ulang panel
-      // supaya player ganti dari iframe ke video langsung.
+      // Stream video tersedia → muat ulang supaya player berganti ke video.
       else if (r.session?.playUrl && r.session.playUrl !== activeSession?.playUrl) load();
     }
     refresh();
@@ -118,14 +102,24 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
     const r = await api<{ authorizeUrl: string; mock: boolean }>(`/api/hosts/${hostId}/shopee/connect`, { method: "POST" });
     if (!r.ok) { setMsg(`❌ ${r.error}`); return; }
     if (r.mock) {
-      // Buka login Shopee Affiliate — host login dengan akunnya sendiri,
-      // lalu klik "Tandai Terhubung" untuk menyimpan koneksinya.
       window.open("https://affiliate.shopee.co.id/", "_blank", "noopener");
       setPendingConnect(r.authorizeUrl);
     } else {
-      // Mode real (partner app approved): langsung ke halaman authorize Shopee.
       window.location.href = r.authorizeUrl;
     }
+  }
+
+  async function saveShareLink() {
+    const r = await api<{ autoLinked: boolean }>(`/api/hosts/${hostId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ liveShareLink: shareLink }),
+    });
+    if (r.ok) {
+      setMsg(r.autoLinked
+        ? "✅ Link tersimpan & live host langsung tertaut"
+        : "✅ Link tersimpan — live berikutnya akan terdeteksi otomatis");
+      load();
+    } else setMsg(`❌ ${r.error}`);
   }
 
   async function linkLive() {
@@ -136,20 +130,7 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
       body: JSON.stringify({ hostId, url: liveLink.trim() }),
     });
     setBusy(false);
-    if (r.ok) { setMsg("✅ Live host tertaut — data mulai ditarik"); setLiveLink(""); load(); }
-    else setMsg(`❌ ${r.error}`);
-  }
-
-  async function startLive() {
-    const title = prompt("Judul sesi live:", `Live ${host?.name} — ${new Date().toLocaleDateString("id-ID")}`);
-    if (title === null) return;
-    setBusy(true);
-    const r = await api(`/api/live-sessions`, {
-      method: "POST",
-      body: JSON.stringify({ hostId, title }),
-    });
-    setBusy(false);
-    if (r.ok) { setMsg("✅ Sesi live dimulai"); load(); }
+    if (r.ok) { setMsg("✅ Video live berhasil ditautkan"); setLiveLink(""); load(); }
     else setMsg(`❌ ${r.error}`);
   }
 
@@ -160,21 +141,6 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
     setBusy(false);
     if (r.ok) { setMsg("✅ Sesi diakhiri"); setMetrics(null); load(); }
     else setMsg(`❌ ${r.error}`);
-  }
-
-  async function pushSelected() {
-    if (!activeSession) return;
-    setBusy(true);
-    const r = await api<{ pushed: number }>(`/api/live-sessions/${activeSession.id}/items`, {
-      method: "POST",
-      body: JSON.stringify({ assignmentIds: [...selectedAssignments] }),
-    });
-    setBusy(false);
-    if (r.ok) {
-      setMsg(`✅ ${r.pushed} produk masuk keranjang live`);
-      setSelectedAssignments(new Set());
-      load();
-    } else setMsg(`❌ ${r.error}`);
   }
 
   // Push satu produk assigned langsung ke keranjang + pin sekaligus.
@@ -203,7 +169,6 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
   if (!host) return <div className="text-zinc-500">Memuat…</div>;
 
   const connected = host.shopeeAccounts.some((a) => a.status === "active");
-  const pinnedId = activeSession?.items.find((i) => i.isShowing)?.id ?? null;
 
   return (
     <div className="space-y-6">
@@ -220,7 +185,7 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
 
       {msg && <p className="text-sm bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2">{msg}</p>}
 
-      {/* Akun Shopee */}
+      {/* Akun Shopee (dibutuhkan buat pin/keranjang) + setup link live */}
       <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-4">
         <div className="flex items-center justify-between">
           <div>
@@ -250,7 +215,6 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
           </button>
         </div>
 
-        {/* Setup sekali: link live host → uid tersimpan → live berikutnya auto-terdeteksi */}
         <div className="border-t border-zinc-800 pt-4">
           <label className="text-xs text-zinc-400">
             Link live host (setup sekali — live berikutnya terdeteksi otomatis)
@@ -293,34 +257,28 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
       <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold">Sesi Live</h2>
-          {activeSession ? (
+          {activeSession && (
             <button onClick={endLive} disabled={busy}
               className="bg-red-600 hover:bg-red-500 disabled:opacity-50 rounded-lg px-4 py-2 text-sm font-semibold">
               ■ Akhiri Sesi
-            </button>
-          ) : (
-            <button onClick={startLive} disabled={busy || !connected}
-              title={connected ? "" : "Konek akun Shopee host dulu"}
-              className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 rounded-lg px-4 py-2 text-sm font-semibold">
-              ▶ Buat & Mulai Sesi
             </button>
           )}
         </div>
 
         {!activeSession && (
           <div className="rounded-lg bg-zinc-800/50 p-4">
-            <h3 className="text-sm font-semibold">Tarik Data Live dari Link Share</h3>
+            <h3 className="text-sm font-semibold">Ambil Video Live</h3>
             <p className="text-xs text-zinc-400 mt-1 mb-3">
-              Host sedang live dari HP-nya? Minta host share link live-nya (tombol share di aplikasi Shopee),
-              tempel di sini — siaran & datanya langsung muncul di panel ini.
+              Biasanya live host terdeteksi otomatis (±20 detik). Kalau perlu manual: tempel link
+              share live dari HP host — panel hanya mengambil videonya, tidak membuka halaman Shopee.
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <input value={liveLink} onChange={(e) => setLiveLink(e.target.value)}
-                placeholder="https://live.shopee.co.id/share?session=…"
+                placeholder="https://live.shopee.co.id/share?session=… atau https://id.shp.ee/…"
                 className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-orange-500" />
               <button onClick={linkLive} disabled={busy || !liveLink.trim()}
                 className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 rounded-lg px-4 py-2 text-sm font-semibold whitespace-nowrap">
-                Tautkan Live
+                Ambil Video
               </button>
             </div>
           </div>
@@ -328,24 +286,18 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
 
         {activeSession && (
           <>
-            {/* Panel live: siaran kiri, produk kanan */}
+            {/* Panel live: video kiri, produk kanan */}
             <div className="grid lg:grid-cols-5 gap-4">
-              {/* Player */}
+              {/* Player — murni video, tidak pernah memuat halaman Shopee */}
               <div className="lg:col-span-2 space-y-2">
                 <div className="rounded-xl overflow-hidden bg-black border border-zinc-800 aspect-[9/16] max-h-[70vh] mx-auto w-full">
-                  <LivePlayer key={playerKey} playUrl={activeSession.playUrl} shareUrl={activeSession.shareUrl} />
+                  <LivePlayer key={playerKey} playUrl={activeSession.playUrl} />
                 </div>
                 <div className="flex justify-center gap-4 text-xs">
                   <button onClick={() => setPlayerKey((k) => k + 1)}
                     className="text-zinc-400 hover:text-orange-400">
                     ↻ Muat ulang player
                   </button>
-                  {activeSession.shareUrl && (
-                    <a href={activeSession.shareUrl} target="_blank"
-                      className="text-sky-400 hover:underline">
-                      ↗ Buka di tab baru
-                    </a>
-                  )}
                 </div>
               </div>
 
@@ -375,7 +327,7 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
                       </div>
                     ))}
                     {activeSession.items.length === 0 && (
-                      <p className="text-zinc-500 text-sm">Keranjang kosong — pin produk ter-assign di bawah.</p>
+                      <p className="text-zinc-500 text-sm">Keranjang kosong — produk kiriman Koleksi akan masuk otomatis.</p>
                     )}
                   </div>
                 </div>
@@ -408,27 +360,6 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
               </div>
             </div>
 
-            {/* Stream credentials (hanya sesi buatan app, bukan hasil tautan link) */}
-            {(activeSession.pushUrl || activeSession.pushKey) && (
-              <div className="grid md:grid-cols-2 gap-3 text-sm">
-                <div className="bg-zinc-800/60 rounded-lg p-3">
-                  <div className="text-xs text-zinc-400 mb-1">RTMP Push URL (untuk OBS)</div>
-                  <code className="text-xs break-all text-orange-300">{activeSession.pushUrl || "—"}</code>
-                </div>
-                <div className="bg-zinc-800/60 rounded-lg p-3">
-                  <div className="text-xs text-zinc-400 mb-1 flex justify-between">
-                    Push Key
-                    <button onClick={() => setShowKey(!showKey)} className="text-zinc-500 hover:text-zinc-300">
-                      {showKey ? "sembunyikan" : "tampilkan"}
-                    </button>
-                  </div>
-                  <code className="text-xs break-all text-orange-300">
-                    {showKey ? activeSession.pushKey || "—" : "••••••••••••"}
-                  </code>
-                </div>
-              </div>
-            )}
-
             {/* Metrik real-time */}
             <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
               {[
@@ -451,47 +382,30 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
                 </div>
               ))}
             </div>
-            <p className="text-[11px] text-zinc-500">
-              Metrik auto-refresh tiap 30 detik. {pinnedId ? "" : "Belum ada produk dipin."}
-            </p>
+            <p className="text-[11px] text-zinc-500">Metrik auto-refresh tiap 30 detik.</p>
           </>
         )}
       </section>
 
-      {/* Produk ter-assign (saat tidak live: pilih untuk push massal nanti) */}
+      {/* Produk ter-assign (saat tidak live) */}
       {!activeSession && (
         <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">Produk Ter-assign ({host.assignments.length})</h2>
-            {selectedAssignments.size > 0 && (
-              <button onClick={pushSelected} disabled={busy || !activeSession}
-                className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 rounded-lg px-4 py-2 text-sm font-semibold">
-                Push {selectedAssignments.size} ke Keranjang Live →
-              </button>
-            )}
-          </div>
+          <h2 className="font-semibold mb-3">Produk Ter-assign ({host.assignments.length})</h2>
           {host.assignments.length > 0 && (
-            <p className="text-xs text-amber-400/80 mb-3">Mulai / tautkan sesi live dulu untuk bisa pin produk ke live.</p>
+            <p className="text-xs text-amber-400/80 mb-3">
+              Produk ini otomatis masuk keranjang live begitu live host terdeteksi.
+            </p>
           )}
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
             {host.assignments.map((a) => (
-              <label key={a.id}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm cursor-pointer border ${
-                  selectedAssignments.has(a.id) ? "border-orange-500 bg-orange-600/10" : "border-transparent bg-zinc-800/60 hover:bg-zinc-800"
-                }`}>
-                <input type="checkbox" disabled={!activeSession} checked={selectedAssignments.has(a.id)}
-                  onChange={() => setSelectedAssignments((p) => {
-                    const n = new Set(p);
-                    if (n.has(a.id)) n.delete(a.id); else n.add(a.id);
-                    return n;
-                  })} />
+              <div key={a.id} className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm bg-zinc-800/60">
                 {a.collectionEntry.product.imageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={a.collectionEntry.product.imageUrl} alt="" className="w-8 h-8 rounded object-cover" />
                 ) : <span className="w-8 h-8 rounded bg-zinc-700 flex items-center justify-center text-xs">📦</span>}
                 <span className="flex-1 line-clamp-1">{a.collectionEntry.product.name}</span>
                 <span className="text-emerald-400 text-xs">{a.collectionEntry.product.commissionRate}%</span>
-              </label>
+              </div>
             ))}
             {host.assignments.length === 0 && (
               <p className="col-span-full text-zinc-500 text-sm">

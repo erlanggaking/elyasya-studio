@@ -2,73 +2,106 @@
 
 import { useEffect, useRef, useState } from "react";
 
-/**
- * Player siaran live di panel. Urutan sumber:
- *  1. Stream FLV langsung dari CDN Shopee (kalau CORS mengizinkan)
- *  2. Stream FLV via proxy server (/api/stream)
- *  3. Iframe halaman share Shopee (terakhir — bisa nyasar ke pemilih bahasa)
- */
-export default function LivePlayer({ playUrl, shareUrl }: { playUrl: string; shareUrl: string }) {
+type PlayerInstance = { destroy: () => void };
+
+function proxied(url: string) {
+  return `/api/stream?u=${encodeURIComponent(url)}`;
+}
+
+/** Memutar URL stream saja; halaman share Shopee tidak pernah dimuat di panel. */
+export default function LivePlayer({ playUrl }: { playUrl: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  // 0 = FLV langsung, 1 = FLV via proxy, 2 = iframe
-  const [source, setSource] = useState(playUrl ? 0 : 2);
+  const [attempt, setAttempt] = useState(0); // 0 = CDN langsung, 1 = proxy server
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    setSource(playUrl ? 0 : 2);
+    setAttempt(0);
+    setFailed(false);
   }, [playUrl]);
 
   useEffect(() => {
-    if (source > 1 || !playUrl || !videoRef.current) return;
-    let player: { destroy: () => void } | null = null;
+    const video = videoRef.current;
+    if (!playUrl || !video || failed) return;
+
+    let player: PlayerInstance | null = null;
     let cancelled = false;
-    const url = source === 0 ? playUrl : `/api/stream?u=${encodeURIComponent(playUrl)}`;
+    const streamUrl = attempt === 0 ? playUrl : proxied(playUrl);
+    const isHls = /\.m3u8(?:\?|$)/i.test(playUrl);
+
+    const tryNextSource = () => {
+      if (cancelled) return;
+      if (attempt === 0) setAttempt(1);
+      else setFailed(true);
+    };
 
     (async () => {
       try {
-        const flvjs = (await import("flv.js")).default;
-        if (cancelled || !videoRef.current) return;
-        if (!flvjs.isSupported()) {
-          setSource(2);
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+
+        if (isHls) {
+          if (video.canPlayType("application/vnd.apple.mpegurl")) {
+            video.src = streamUrl;
+            video.addEventListener("error", tryNextSource, { once: true });
+            await video.play().catch(() => undefined);
+            return;
+          }
+
+          const Hls = (await import("hls.js")).default;
+          if (cancelled || !Hls.isSupported()) return tryNextSource();
+          const hls = new Hls({ lowLatencyMode: true, liveSyncDurationCount: 3, backBufferLength: 30 });
+          hls.on(Hls.Events.ERROR, (_event, data) => {
+            if (data.fatal) tryNextSource();
+          });
+          hls.loadSource(streamUrl);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => undefined));
+          player = hls;
           return;
         }
-        const p = flvjs.createPlayer(
-          { type: "flv", isLive: true, url },
+
+        const flvjs = (await import("flv.js")).default;
+        if (cancelled || !flvjs.isSupported()) return tryNextSource();
+        const flv = flvjs.createPlayer(
+          { type: "flv", isLive: true, url: streamUrl },
           { enableStashBuffer: false, autoCleanupSourceBuffer: true }
         );
-        p.attachMediaElement(videoRef.current);
-        p.on(flvjs.Events.ERROR, () => setSource((s) => s + 1));
-        p.load();
-        p.play()?.catch(() => {});
-        player = p;
+        flv.attachMediaElement(video);
+        flv.on(flvjs.Events.ERROR, tryNextSource);
+        flv.load();
+        flv.play()?.catch(() => undefined);
+        player = flv;
       } catch {
-        setSource((s) => s + 1);
+        tryNextSource();
       }
     })();
 
     return () => {
       cancelled = true;
-      try { player?.destroy(); } catch { /* ok */ }
+      video.removeEventListener("error", tryNextSource);
+      try { player?.destroy(); } catch { /* player sudah berhenti */ }
     };
-  }, [source, playUrl]);
+  }, [attempt, failed, playUrl]);
 
-  if (playUrl && source <= 1) {
+  if (!playUrl || failed) {
     return (
-      <video ref={videoRef} className="w-full h-full object-contain bg-black"
-        controls muted autoPlay playsInline />
-    );
-  }
-
-  if (shareUrl) {
-    return (
-      <iframe src={shareUrl} className="w-full h-full"
-        allow="autoplay; fullscreen; encrypted-media" allowFullScreen />
+      <div className="w-full h-full flex flex-col items-center justify-center text-zinc-400 text-sm gap-3 px-8 text-center">
+        <span className="text-3xl" aria-hidden>📡</span>
+        <span className="font-medium text-zinc-300">
+          {failed ? "Video live belum dapat diputar" : "Menunggu stream video host"}
+        </span>
+        <span className="text-xs text-zinc-500">
+          {failed
+            ? "URL video tidak tersedia atau sudah kedaluwarsa. Muat ulang player untuk mencoba lagi."
+            : "Panel akan menampilkan video otomatis setelah URL stream diterima."}
+        </span>
+      </div>
     );
   }
 
   return (
-    <div className="w-full h-full flex flex-col items-center justify-center text-zinc-500 text-sm gap-2">
-      <span className="text-3xl">📡</span>
-      Menunggu siaran host…
-    </div>
+    <video ref={videoRef} className="w-full h-full object-contain bg-black"
+      controls muted autoPlay playsInline />
   );
 }

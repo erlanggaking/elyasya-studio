@@ -31,6 +31,12 @@ export async function POST(
   }
 
   const active = await db.liveSession.findFirst({ where: { hostId: id, status: "live" } });
+
+  // Sesi dari URL FLV/HLS langsung bersifat video-only dan tidak perlu OAuth,
+  // probing status, atau Partner API Shopee.
+  if (active && !active.shopeeSessionId) {
+    return NextResponse.json({ ok: true, live: true, session: active });
+  }
   const ongoing = liveUid ? await probeOngoing(liveUid) : null;
 
   // 2. Sesi aktif di DB

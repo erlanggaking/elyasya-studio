@@ -27,6 +27,10 @@ export async function GET(
     return NextResponse.json({ ok: true, metrics: last ?? null, live: session.status === "live" });
   }
 
+  if (!session.shopeeSessionId) {
+    return NextResponse.json({ ok: true, metrics: last ?? null, live: true });
+  }
+
   // Sesi hasil "tautkan link live" tidak punya akun OAuth — di mode mock tetap
   // hasilkan metrik simulasi; di mode real balas snapshot terakhir saja.
   const account = await getActiveAccount(session.hostId);

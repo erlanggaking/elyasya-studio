@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getTokenUser } from "@/lib/auth";
+import { pushPendingAssignments } from "@/lib/live-cart";
 
 // Terima data sesi live yang di-capture extension dari live.shopee.co.id
 // (content-live.js). Disimpan sebagai LiveSession "eksternal" (tanpa host)
@@ -23,18 +24,20 @@ export async function POST(req: Request) {
 
     let existing = await db.liveSession.findFirst({ where: { shopeeSessionId } });
 
-    // Sesi belum dikenal → auto-tautkan ke host yang liveUsername-nya cocok
-    // dengan nama streamer (setup sekali di profil host, tanpa copy-paste link).
+    // Sesi belum dikenal → auto-tautkan ke host: cocokkan uid (dari watcher
+    // background) atau nama streamer (dari capture halaman live).
     if (!existing) {
+      const uid = String(s.uid ?? "").trim();
       const streamer = String(s.streamer_name ?? s.streamerName ?? "").trim();
-      if (!streamer || streamer === "—") continue;
       const candidates = await db.host.findMany({
-        where: { liveUsername: { not: "" } },
-        select: { id: true, name: true, studioId: true, liveUsername: true },
+        where: { OR: [{ liveUid: { not: "" } }, { liveUsername: { not: "" } }] },
+        select: { id: true, name: true, studioId: true, liveUsername: true, liveUid: true },
       });
-      const host = candidates.find(
-        (h) => h.liveUsername.toLowerCase() === streamer.toLowerCase()
-      );
+      const host =
+        (uid ? candidates.find((h) => h.liveUid === uid) : undefined) ??
+        (streamer && streamer !== "—"
+          ? candidates.find((h) => h.liveUsername.toLowerCase() === streamer.toLowerCase())
+          : undefined);
       if (!host) continue;
       const stillLive = await db.liveSession.findFirst({ where: { hostId: host.id, status: "live" } });
       if (stillLive) continue; // jangan dobel — akhiri sesi lama dulu
@@ -44,15 +47,18 @@ export async function POST(req: Request) {
           hostId: host.id,
           studioId: host.studioId,
           status: "live",
-          title: String(s.title ?? `Live ${host.name}`),
+          title: String(s.title ?? "") || `Live ${host.name}`,
           shareUrl:
             String(s.url ?? "") ||
             `https://live.shopee.co.id/share?from=live&session=${shopeeSessionId}`,
+          playUrl: String(s.play_url ?? s.playUrl ?? ""),
           startedAt: new Date(),
         },
       });
       linked += 1;
       console.log(`[live/sync] auto-link session ${shopeeSessionId} → host ${host.name}`);
+      // Produk ter-assign langsung masuk keranjang live.
+      await pushPendingAssignments(host.id);
     }
 
     // URL stream asli dari halaman live (hasil capture browser) → player panel.

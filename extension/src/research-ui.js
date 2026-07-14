@@ -387,14 +387,93 @@ window.ElyasyaResearchUI = (function () {
     return out;
   }
 
-  async function sendToDashboard() {
+  function sendToDashboard() {
     const selected = getSelectedProducts();
     const list = selected.length ? selected : filterProducts(R().getProducts());
     if (!list.length) {
       setActionStatus("Tidak ada produk untuk dikirim", true);
       return;
     }
-    setActionStatus(`Mengirim ${list.length} produk ke dashboard...`);
+    openFolderChooser(list);
+  }
+
+  function closeFolderChooser() {
+    document.getElementById("elyasya-folder-chooser")?.remove();
+  }
+
+  // Pilih folder Koleksi tujuan sebelum kirim (atau tanpa folder / folder baru)
+  async function openFolderChooser(list) {
+    closeFolderChooser();
+    const wrap = document.createElement("div");
+    wrap.id = "elyasya-folder-chooser";
+    wrap.className = "elyasya-folder-chooser";
+    wrap.innerHTML = `
+      <div class="elyasya-folder-chooser__backdrop"></div>
+      <div class="elyasya-folder-chooser__box">
+        <div class="elyasya-folder-chooser__title">Kirim ${list.length} produk ke Koleksi</div>
+        <div class="elyasya-folder-chooser__list">
+          <div class="elyasya-folder-chooser__loading">Memuat folder…</div>
+        </div>
+        <div class="elyasya-folder-chooser__new">
+          <input type="text" id="elyasya-folder-new-name" placeholder="Atau ketik nama folder baru…" maxlength="60" />
+          <button type="button" class="elyasya-btn-action send" id="elyasya-folder-new-send">buat &amp; kirim</button>
+        </div>
+        <div class="elyasya-folder-chooser__footer">
+          <button type="button" class="elyasya-btn-action" id="elyasya-folder-cancel">batal</button>
+        </div>
+      </div>
+    `;
+    wrap.querySelector(".elyasya-folder-chooser__backdrop").addEventListener("click", closeFolderChooser);
+    wrap.querySelector("#elyasya-folder-cancel").addEventListener("click", closeFolderChooser);
+    const sendNew = () => {
+      const name = wrap.querySelector("#elyasya-folder-new-name").value.trim();
+      if (!name) return;
+      closeFolderChooser();
+      doSendToDashboard(list, { name });
+    };
+    wrap.querySelector("#elyasya-folder-new-send").addEventListener("click", sendNew);
+    wrap.querySelector("#elyasya-folder-new-name").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") sendNew();
+    });
+    (document.getElementById(MODAL_ID) || document.body).appendChild(wrap);
+
+    // Muat daftar folder dari dashboard; kalau gagal tetap bisa kirim tanpa folder
+    let folders = [];
+    let loadError = "";
+    try {
+      const res = await chrome.runtime.sendMessage({ type: "GET_FOLDERS" });
+      if (res?.ok) folders = res.folders || [];
+      else loadError = res?.error || "";
+    } catch {
+      loadError = "Gagal memuat folder";
+    }
+    const listEl = wrap.querySelector(".elyasya-folder-chooser__list");
+    if (!listEl) return;
+    listEl.innerHTML = "";
+    const addItem = (label, folder, muted = false) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "elyasya-folder-chooser__item" + (muted ? " muted" : "");
+      btn.textContent = label;
+      btn.addEventListener("click", () => {
+        closeFolderChooser();
+        doSendToDashboard(list, folder);
+      });
+      listEl.appendChild(btn);
+    };
+    addItem("📥 Tanpa folder (Koleksi utama)", null, true);
+    for (const f of folders) addItem(`📁 ${f.name} (${f.count})`, { id: f.id, name: f.name });
+    if (loadError) {
+      const err = document.createElement("div");
+      err.className = "elyasya-folder-chooser__error";
+      err.textContent = `Folder tidak termuat: ${loadError}`;
+      listEl.appendChild(err);
+    }
+  }
+
+  async function doSendToDashboard(list, folder) {
+    const suffix = folder?.name ? ` ke folder "${folder.name}"` : "";
+    setActionStatus(`Mengirim ${list.length} produk${suffix}...`);
     try {
       await chrome.runtime.sendMessage({
         type: "CAPTURE",
@@ -404,6 +483,8 @@ window.ElyasyaResearchUI = (function () {
           page_url: location.href,
           payload: { data: { list } },
           captured_at: new Date().toISOString(),
+          ...(folder?.id ? { folder_id: folder.id } : {}),
+          ...(folder?.name ? { folder_name: folder.name } : {}),
         },
         products: list.map((p) => ({
           key: p.key,
@@ -417,7 +498,7 @@ window.ElyasyaResearchUI = (function () {
       });
       const res = await chrome.runtime.sendMessage({ type: "SYNC_NOW" });
       if (res?.ok) {
-        setActionStatus(res.message || `Terkirim ${list.length} produk ke dashboard`);
+        setActionStatus(res.message || `Terkirim ${list.length} produk${suffix} ke dashboard`);
       } else {
         setActionStatus(res?.error || "Gagal sync ke dashboard", true);
       }

@@ -476,11 +476,30 @@ function findNumDeep(node, keyRe, depth = 0, seen = new Set()) {
   return 0;
 }
 
+function findSessionIdDeep(node, depth = 0, seen = new Set()) {
+  if (!node || typeof node !== "object" || depth > 5 || seen.has(node)) return "";
+  seen.add(node);
+  for (const k in node) {
+    if (/^session_?id$/i.test(k)) {
+      const v = node[k];
+      if ((typeof v === "number" || typeof v === "string") && String(v).match(/^\d{4,}$/)) {
+        return String(v);
+      }
+    }
+  }
+  for (const k in node) {
+    const r = findSessionIdDeep(node[k], depth + 1, seen);
+    if (r) return r;
+  }
+  return "";
+}
+
 async function watchLiveSessions() {
   const config = await getConfig();
   if (!config.token || !config.enabled) return;
 
   let watched = [];
+  let detectUids = [];
   try {
     const res = await fetch(`${config.apiUrl}/api/extension/live/watch`, {
       headers: { Authorization: `Bearer ${config.token}` },
@@ -488,11 +507,38 @@ async function watchLiveSessions() {
     const data = await res.json().catch(() => ({}));
     if (!data.ok || !Array.isArray(data.sessions)) return;
     watched = data.sessions;
+    detectUids = Array.isArray(data.detect_uids) ? data.detect_uids : [];
   } catch {
     return;
   }
 
   const updates = [];
+
+  // 1. Deteksi live BARU per uid host (dari browser, endpoint ongoing akurat).
+  for (const uid of detectUids.slice(0, 10)) {
+    try {
+      const res = await fetch(
+        `https://live.shopee.co.id/api/v1/shop_page/live/ongoing?uid=${encodeURIComponent(uid)}`,
+        { credentials: "include", headers: { Accept: "application/json" } }
+      );
+      const d = await res.json().catch(() => null);
+      const live = d?.data?.ongoing_live;
+      if (!live || typeof live !== "object") continue;
+      const sessionId = findSessionIdDeep(live);
+      if (!sessionId) continue;
+      updates.push({
+        session_id: sessionId,
+        uid: String(uid),
+        title: String(live.title ?? live.name ?? ""),
+        play_url: findPlayUrlDeep(live),
+        viewers: findNumDeep(live, /^(ccu|viewer|online_count|member_cnt)/i),
+      });
+    } catch {
+      /* skip uid ini */
+    }
+  }
+
+  // 2. Perkaya sesi yang sudah dipantau (play_url + viewer).
   for (const s of watched.slice(0, 5)) {
     try {
       const res = await fetch(
@@ -561,6 +607,22 @@ async function shopeeSearch(keyword, newest = 0, limit = 60) {
   }
 }
 
+// Daftar folder Koleksi dari dashboard — untuk pemilih folder "kirim ke dashboard"
+async function getFolders() {
+  const config = await getConfig();
+  if (!config.token) return { ok: false, error: "Token belum diisi. Klik Simpan dulu." };
+  try {
+    const res = await fetch(`${config.apiUrl}/api/extension/folders`, {
+      headers: { Authorization: `Bearer ${config.token}` },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+    return { ok: true, folders: Array.isArray(data.folders) ? data.folders : [] };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Network error" };
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "SHOPEE_SEARCH") {
     shopeeSearch(msg.keyword, msg.newest, msg.limit)
@@ -621,6 +683,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.type === "SYNC_NOW") {
     syncNow(true)
+      .then(sendResponse)
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+
+  if (msg.type === "GET_FOLDERS") {
+    getFolders()
       .then(sendResponse)
       .catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true;
@@ -715,3 +784,11 @@ chrome.runtime.onInstalled.addListener(async () => {
   chrome.alarms.create(LIVE_WATCH_ALARM, { periodInMinutes: 1 });
   await getDeviceId();
 });
+
+chrome.runtime.onStartup.addListener(() => {
+  chrome.alarms.create(SYNC_ALARM, { periodInMinutes: 1 });
+  chrome.alarms.create(LIVE_WATCH_ALARM, { periodInMinutes: 1 });
+});
+
+// Jalankan sekali tiap service worker bangun — jangan tunggu alarm pertama.
+watchLiveSessions().catch(() => {});

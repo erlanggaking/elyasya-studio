@@ -484,3 +484,101 @@
 .elyasya-action-status.err {
   color: #e11d48;
 }
+
+/* Pemilih folder Koleksi — muncul saat "kirim ke dashboard" */
+.elyasya-folder-chooser {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.elyasya-folder-chooser__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.elyasya-folder-chooser__box {
+  position: relative;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  padding: 16px;
+  font-size: 13px;
+  color: #333;
+}
+
+.elyasya-folder-chooser__title {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.elyasya-folder-chooser__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+}
+
+.elyasya-folder-chooser__item {
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 6px;
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+  color: #333;
+}
+
+.elyasya-folder-chooser__item:hover {
+  border-color: #ee4d2d;
+  background: #fff5f2;
+}
+
+.elyasya-folder-chooser__item.muted {
+  color: #777;
+}
+
+.elyasya-folder-chooser__loading,
+.elyasya-folder-chooser__error {
+  font-size: 12px;
+  color: #999;
+  padding: 4px 2px;
+}
+
+.elyasya-folder-chooser__error {
+  color: #e11d48;
+}
+
+.elyasya-folder-chooser__new {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.elyasya-folder-chooser__new input {
+  flex: 1;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  outline: none;
+}
+
+.elyasya-folder-chooser__new input:focus {
+  border-color: #ee4d2d;
+}
+
+.elyasya-folder-chooser__footer {
+  display: flex;
+  justify-content: flex-end;
+}
