@@ -27,6 +27,20 @@ export default function LivePage() {
 
   useEffect(() => { load(); }, [load]);
 
+  async function deleteStudio(s: Studio) {
+    if (s.liveNow > 0) {
+      alert(`Studio "${s.name}" sedang ada ${s.liveNow} sesi live. Akhiri dulu live-nya sebelum menghapus.`);
+      return;
+    }
+    if (!confirm(
+      `Hapus studio "${s.name}"?\n\nHost di dalamnya tidak ikut terhapus (jadi tanpa studio), ` +
+      `tapi produk yang dikirim ke studio ini akan dihapus dari antrian. Riwayat sesi live tetap tersimpan.`
+    )) return;
+    const r = await api(`/api/studios/${s.id}`, { method: "DELETE" });
+    if (r.ok) load();
+    else alert(r.error || "Gagal menghapus studio");
+  }
+
   async function createStudio() {
     const r = await api("/api/studios", {
       method: "POST",
@@ -62,11 +76,18 @@ export default function LivePage() {
                 <div className="text-lg font-bold">{s.name}</div>
                 <div className="text-xs text-zinc-400">{s.location || "Tanpa lokasi"}</div>
               </div>
-              {s.liveNow > 0 && (
-                <span className="text-[10px] font-bold bg-red-600 rounded px-2 py-1 animate-pulse">
-                  {s.liveNow} LIVE
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                {s.liveNow > 0 && (
+                  <span className="text-[10px] font-bold bg-red-600 rounded px-2 py-1 animate-pulse">
+                    {s.liveNow} LIVE
+                  </span>
+                )}
+                <button title="Hapus studio"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteStudio(s); }}
+                  className="text-zinc-600 hover:text-red-400 text-sm leading-none p-1 -m-1">
+                  🗑
+                </button>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3 mt-4">
               <div className="bg-zinc-800/60 rounded-lg p-3 text-center">
