@@ -325,17 +325,6 @@ export default function SettingPage() {
         )}
       </section>
 
-      {/* Info konfigurasi Shopee */}
-      <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-        <h2 className="font-semibold mb-2">Integrasi Shopee Open Platform</h2>
-        <p className="text-sm text-zinc-400">
-          Kredensial Partner (SHOPEE_PARTNER_ID / SHOPEE_PARTNER_KEY) diatur lewat environment variable server,
-          bukan lewat UI — sesuai kebijakan keamanan (PRD §12). Selama kredensial kosong, aplikasi berjalan
-          dalam <b className="text-amber-400">mode demo/mock</b>: sesi live, keranjang, dan metrik disimulasikan
-          supaya seluruh alur bisa dipakai tanpa approval Shopee.
-        </p>
-      </section>
-
       {/* Modal buat akun */}
       {showNewAccount && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowNewAccount(false)}>

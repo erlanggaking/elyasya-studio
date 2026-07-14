@@ -4,33 +4,43 @@ import { useEffect, useRef, useState } from "react";
 
 type PlayerInstance = { destroy: () => void };
 
-function proxied(url: string) {
-  return `/api/stream?u=${encodeURIComponent(url)}`;
+function proxied(url: string, sessionId: string) {
+  return sessionId
+    ? `/api/stream?session=${encodeURIComponent(sessionId)}`
+    : `/api/stream?u=${encodeURIComponent(url)}`;
 }
 
 /** Memutar URL stream saja; halaman share Shopee tidak pernah dimuat di panel. */
-export default function LivePlayer({ playUrl }: { playUrl: string }) {
+export default function LivePlayer({ playUrl, sessionId }: { playUrl: string; sessionId: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [attempt, setAttempt] = useState(0); // 0 = CDN langsung, 1 = proxy server
+  // 0 = proxy server (mint URL segar tiap play — jalur terbukti), 1 = CDN langsung
+  const [attempt, setAttempt] = useState(0);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     setAttempt(0);
     setFailed(false);
-  }, [playUrl]);
+  }, [playUrl, sessionId]);
+
+  // Auto-retry: live bisa baru mulai / jeda sesaat — coba lagi tiap 12 detik.
+  useEffect(() => {
+    if (!failed) return;
+    const t = setTimeout(() => { setAttempt(0); setFailed(false); }, 12000);
+    return () => clearTimeout(t);
+  }, [failed]);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!playUrl || !video || failed) return;
+    if ((!playUrl && !sessionId) || !video || failed) return;
 
     let player: PlayerInstance | null = null;
     let cancelled = false;
-    const streamUrl = attempt === 0 ? playUrl : proxied(playUrl);
-    const isHls = /\.m3u8(?:\?|$)/i.test(playUrl);
+    const streamUrl = attempt === 0 ? proxied(playUrl, sessionId) : playUrl;
+    const isHls = /\.m3u8(?:\?|$)/i.test(attempt === 0 ? "" : playUrl);
 
     const tryNextSource = () => {
       if (cancelled) return;
-      if (attempt === 0) setAttempt(1);
+      if (attempt === 0 && playUrl) setAttempt(1);
       else setFailed(true);
     };
 
@@ -50,7 +60,11 @@ export default function LivePlayer({ playUrl }: { playUrl: string }) {
 
           const Hls = (await import("hls.js")).default;
           if (cancelled || !Hls.isSupported()) return tryNextSource();
-          const hls = new Hls({ lowLatencyMode: true, liveSyncDurationCount: 3, backBufferLength: 30 });
+          const hls = new Hls({
+            lowLatencyMode: true,
+            liveSyncDurationCount: 3,
+            backBufferLength: 30,
+          });
           hls.on(Hls.Events.ERROR, (_event, data) => {
             if (data.fatal) tryNextSource();
           });
@@ -64,13 +78,20 @@ export default function LivePlayer({ playUrl }: { playUrl: string }) {
         const flvjs = (await import("flv.js")).default;
         if (cancelled || !flvjs.isSupported()) return tryNextSource();
         const flv = flvjs.createPlayer(
-          { type: "flv", isLive: true, url: streamUrl },
+          {
+            type: "flv",
+            isLive: true,
+            url: streamUrl,
+            cors: true,
+            // CDN mengirim ACAO "*"; credential mode justru membuat CORS gagal.
+            withCredentials: false,
+          },
           { enableStashBuffer: false, autoCleanupSourceBuffer: true }
         );
         flv.attachMediaElement(video);
         flv.on(flvjs.Events.ERROR, tryNextSource);
         flv.load();
-        flv.play()?.catch(() => undefined);
+        await Promise.resolve(flv.play()).catch(() => undefined);
         player = flv;
       } catch {
         tryNextSource();
@@ -82,9 +103,9 @@ export default function LivePlayer({ playUrl }: { playUrl: string }) {
       video.removeEventListener("error", tryNextSource);
       try { player?.destroy(); } catch { /* player sudah berhenti */ }
     };
-  }, [attempt, failed, playUrl]);
+  }, [attempt, failed, playUrl, sessionId]);
 
-  if (!playUrl || failed) {
+  if ((!playUrl && !sessionId) || failed) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center text-zinc-400 text-sm gap-3 px-8 text-center">
         <span className="text-3xl" aria-hidden>📡</span>
@@ -93,7 +114,7 @@ export default function LivePlayer({ playUrl }: { playUrl: string }) {
         </span>
         <span className="text-xs text-zinc-500">
           {failed
-            ? "URL video tidak tersedia atau sudah kedaluwarsa. Muat ulang player untuk mencoba lagi."
+            ? "Mencoba ulang otomatis dalam beberapa detik… (pastikan host masih live)"
             : "Panel akan menampilkan video otomatis setelah URL stream diterima."}
         </span>
       </div>

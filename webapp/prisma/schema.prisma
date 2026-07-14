@@ -69,6 +69,10 @@ model Host {
   // resolve — dipakai auto-deteksi live berikutnya tanpa paste link lagi.
   liveShareLink  String          @default("")
   liveUid        String          @default("")
+  // Auto-pin: rotasi pin produk keranjang saat live (urut | acak) tiap N detik.
+  autoPinEnabled Boolean         @default(false)
+  autoPinSeconds Int             @default(60)
+  autoPinMode    String          @default("urut")
   studioId       String?
   studio         Studio?         @relation(fields: [studioId], references: [id], onDelete: SetNull)
   createdAt      DateTime        @default(now())
@@ -181,6 +185,10 @@ model LiveSessionItem {
   product            Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
   itemNo             Int         @default(0)
   isShowing          Boolean     @default(false)
+  // Metrik per-item dari get_session_item_metric (di-sync berkala saat live)
+  soldItems          Int         @default(0)
+  itemClicks         Int         @default(0)
+  atc                Int         @default(0)
   pushedAt           DateTime    @default(now())
   sourceAssignmentId String?
   sourceAssignment   Assignment? @relation(fields: [sourceAssignmentId], references: [id], onDelete: SetNull)

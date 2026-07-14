@@ -15,6 +15,14 @@ export async function POST(
   const host = await db.host.findUnique({ where: { id } });
   if (!host) return NextResponse.json({ ok: false, error: "Host tidak ditemukan" }, { status: 404 });
 
-  const authorizeUrl = buildAuthorizeUrl(host.id);
-  return NextResponse.json({ ok: true, authorizeUrl, mock: SHOPEE_MOCK });
+  try {
+    const authorizeUrl = buildAuthorizeUrl(host.id);
+    return NextResponse.json({ ok: true, authorizeUrl, mock: SHOPEE_MOCK });
+  } catch (err) {
+    console.error("[shopee/connect]", err);
+    return NextResponse.json(
+      { ok: false, error: err instanceof Error ? err.message : "Konfigurasi Shopee tidak valid" },
+      { status: 500 }
+    );
+  }
 }

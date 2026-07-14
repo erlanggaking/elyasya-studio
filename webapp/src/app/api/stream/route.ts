@@ -1,4 +1,6 @@
 import { getSessionUser } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { getPublicPlayUrl } from "@/lib/shopee-live";
 
 // Proxy stream FLV/HLS live Shopee → player panel. CDN Shopee tidak selalu
 // mengirim header CORS untuk origin kita, jadi dialirkan lewat server.
@@ -14,7 +16,26 @@ export async function GET(req: Request) {
   const user = await getSessionUser();
   if (!user) return new Response("Unauthorized", { status: 401 });
 
-  const raw = new URL(req.url).searchParams.get("u") || "";
+  const params = new URL(req.url).searchParams;
+  const localSessionId = params.get("session") || "";
+  let raw = params.get("u") || "";
+
+  // Untuk fallback player, resolve ulang URL CDN agar signature yang sudah
+  // kedaluwarsa di browser/DB tidak ikut dipakai oleh proxy.
+  if (localSessionId) {
+    const session = await db.liveSession.findUnique({
+      where: { id: localSessionId },
+      select: { status: true, shopeeSessionId: true, playUrl: true },
+    });
+    if (!session || session.status !== "live") {
+      return new Response("Sesi live tidak ditemukan", { status: 404 });
+    }
+    raw = session.shopeeSessionId
+      ? await getPublicPlayUrl(session.shopeeSessionId)
+      : session.playUrl;
+    if (!raw) return new Response("URL stream belum tersedia", { status: 404 });
+  }
+
   let target: URL;
   try {
     target = new URL(raw);

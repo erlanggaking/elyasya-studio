@@ -17,7 +17,7 @@ export async function GET(req: Request) {
 
   const sessions = await db.liveSession.findMany({
     where: { status: "live", shopeeSessionId: { not: "" } },
-    select: { shopeeSessionId: true, playUrl: true },
+    select: { shopeeSessionId: true },
     take: 10,
   });
   const hostsNoLive = await db.host.findMany({
@@ -37,7 +37,6 @@ export async function GET(req: Request) {
     ok: true,
     sessions: sessions.map((s) => ({
       session_id: s.shopeeSessionId,
-      has_play_url: Boolean(s.playUrl),
     })),
     detect_uids: hostsNoLive.map((h) => h.liveUid),
   });

@@ -17,21 +17,31 @@ export async function getActiveAccount(hostId: string): Promise<ShopeeAccount | 
   if (account.tokenExpiresAt && account.tokenExpiresAt.getTime() < soon) {
     try {
       const t = await refreshAccessToken(account.refreshToken, account.shopId);
-      return await db.shopeeAccount.update({
-        where: { id: account.id },
-        data: {
-          accessToken: t.access_token,
-          refreshToken: t.refresh_token,
-          tokenExpiresAt: new Date(Date.now() + (t.expire_in ?? 14400) * 1000),
-          status: "active",
-        },
+      const data = {
+        accessToken: t.access_token,
+        refreshToken: t.refresh_token ?? account.refreshToken,
+        tokenExpiresAt: new Date(Date.now() + (t.expire_in ?? 14400) * 1000),
+        status: "active",
+      };
+      // Shopee MEROTASI refresh token tiap dipakai. Satu shop bisa dipakai
+      // beberapa host (baris akun berbeda) — terapkan token baru ke SEMUA
+      // baris shop ini supaya salinan di baris lain tidak mati.
+      await db.shopeeAccount.updateMany({
+        where: { shopId: account.shopId, status: { not: "revoked" } },
+        data,
       });
+      return { ...account, ...data, tokenExpiresAt: data.tokenExpiresAt };
     } catch (err) {
       console.error("[shopee refresh]", account.id, err);
-      await db.shopeeAccount.update({
-        where: { id: account.id },
-        data: { status: "expired" },
-      });
+      const msg = err instanceof Error ? err.message : String(err);
+      // Hanya tandai expired bila refresh token benar-benar ditolak Shopee —
+      // error jaringan/sementara jangan sampai "mereset" credential host.
+      if (/refresh token|invalid/i.test(msg)) {
+        await db.shopeeAccount.updateMany({
+          where: { shopId: account.shopId, status: { not: "revoked" } },
+          data: { status: "expired" },
+        });
+      }
       return null;
     }
   }

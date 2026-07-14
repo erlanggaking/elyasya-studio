@@ -36,7 +36,32 @@ export async function GET(
     },
   });
   if (!studio) return NextResponse.json({ ok: false, error: "Tidak ditemukan" }, { status: 404 });
-  return NextResponse.json({ ok: true, studio });
+
+  // Produk paling banyak terjual di studio ini (agregat semua sesi live-nya)
+  const soldGroups = await db.liveSessionItem.groupBy({
+    by: ["productId"],
+    where: { soldItems: { gt: 0 }, liveSession: { studioId: id } },
+    _sum: { soldItems: true },
+    orderBy: { _sum: { soldItems: "desc" } },
+    take: 5,
+  });
+  const soldProducts = await db.product.findMany({
+    where: { id: { in: soldGroups.map((g) => g.productId) } },
+    select: { id: true, name: true, imageUrl: true, price: true },
+  });
+  const topProducts = soldGroups.map((g) => {
+    const p = soldProducts.find((x) => x.id === g.productId);
+    const sold = g._sum.soldItems ?? 0;
+    return {
+      productId: g.productId,
+      name: p?.name ?? "Produk",
+      imageUrl: p?.imageUrl ?? "",
+      sold,
+      revenue: Math.round(sold * (p?.price ?? 0)),
+    };
+  });
+
+  return NextResponse.json({ ok: true, studio, topProducts });
 }
 
 export async function PATCH(

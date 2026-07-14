@@ -538,25 +538,33 @@ async function watchLiveSessions() {
     }
   }
 
-  // 2. Perkaya sesi yang sudah dipantau (play_url + viewer).
+  // 2. Perkaya sesi yang sudah dipantau. URL CDN bertanda tangan dan cepat
+  // kedaluwarsa, jadi ambil endpoint play_url setiap polling, bukan hanya saat
+  // database belum punya URL.
   for (const s of watched.slice(0, 5)) {
     try {
-      const res = await fetch(
-        `https://live.shopee.co.id/api/v1/session/${encodeURIComponent(s.session_id)}`,
-        {
-          credentials: "include",
-          headers: {
-            Accept: "application/json",
-            "X-Requested-With": "XMLHttpRequest",
-            Referer: `https://live.shopee.co.id/share?from=live&session=${s.session_id}`,
-          },
-        }
-      );
-      const d = await res.json().catch(() => null);
-      if (!d || (d.err_code != null && d.err_code !== 0 && !d.data)) continue;
-      const playUrl = findPlayUrlDeep(d);
-      const viewers = findNumDeep(d, /^(ccu|viewer|online_count|member_cnt)/i);
-      const likes = findNumDeep(d, /^(like_cnt|likes|total_like)/i);
+      const headers = {
+        Accept: "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        Referer: `https://live.shopee.co.id/share?from=live&session=${s.session_id}`,
+      };
+      const [playRes, detailRes] = await Promise.all([
+        fetch(
+          `https://live.shopee.co.id/api/v1/session/${encodeURIComponent(s.session_id)}/play_url`,
+          { credentials: "include", headers }
+        ),
+        fetch(
+          `https://live.shopee.co.id/api/v1/session/${encodeURIComponent(s.session_id)}`,
+          { credentials: "include", headers }
+        ),
+      ]);
+      const [playData, detailData] = await Promise.all([
+        playRes.json().catch(() => null),
+        detailRes.json().catch(() => null),
+      ]);
+      const playUrl = findPlayUrlDeep(playData) || findPlayUrlDeep(detailData);
+      const viewers = findNumDeep(detailData, /^(ccu|viewer|online_count|member_cnt)/i);
+      const likes = findNumDeep(detailData, /^(like_cnt|likes|total_like)/i);
       if (!playUrl && !viewers) continue;
       updates.push({
         session_id: String(s.session_id),

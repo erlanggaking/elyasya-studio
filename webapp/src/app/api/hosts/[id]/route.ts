@@ -104,6 +104,13 @@ export async function PATCH(
       ...(body.contact !== undefined ? { contact: String(body.contact) } : {}),
       ...(body.liveUsername !== undefined ? { liveUsername: String(body.liveUsername).trim() } : {}),
       ...(body.studioId !== undefined ? { studioId: body.studioId || null } : {}),
+      ...(body.autoPinEnabled !== undefined ? { autoPinEnabled: Boolean(body.autoPinEnabled) } : {}),
+      ...(body.autoPinSeconds !== undefined
+        ? { autoPinSeconds: Math.max(10, Math.min(3600, Number(body.autoPinSeconds) || 60)) }
+        : {}),
+      ...(body.autoPinMode !== undefined
+        ? { autoPinMode: body.autoPinMode === "acak" ? "acak" : "urut" }
+        : {}),
       ...liveExtra,
     },
   });

@@ -38,6 +38,10 @@ export async function GET(req: Request) {
 
   const rows = sessions.map((s) => {
     const m = s.snapshots[0];
+    // Durasi live: selesai → endedAt-startedAt; masih live → berjalan sampai sekarang.
+    const durationSec = s.startedAt
+      ? Math.max(0, Math.floor(((s.endedAt ?? new Date()).getTime() - s.startedAt.getTime()) / 1000))
+      : 0;
     return {
       id: s.id,
       title: s.title,
@@ -46,6 +50,7 @@ export async function GET(req: Request) {
       studio: s.studio,
       startedAt: s.startedAt,
       endedAt: s.endedAt,
+      durationSec,
       itemCount: s._count.items,
       gmv: m?.gmv ?? 0,
       orders: m?.orders ?? 0,
@@ -83,20 +88,51 @@ export async function GET(req: Request) {
 
   // Agregasi per studio & per host
   const byKey = (key: "studio" | "host") => {
-    const map = new Map<string, { name: string; gmv: number; orders: number; views: number; estCommission: number; sessions: number }>();
+    const map = new Map<string, { name: string; gmv: number; orders: number; views: number; estCommission: number; sessions: number; durationSec: number }>();
     for (const r of rows) {
       const ent = key === "studio" ? r.studio : r.host;
       if (!ent) continue;
-      const cur = map.get(ent.id) ?? { name: ent.name, gmv: 0, orders: 0, views: 0, estCommission: 0, sessions: 0 };
+      const cur = map.get(ent.id) ?? { name: ent.name, gmv: 0, orders: 0, views: 0, estCommission: 0, sessions: 0, durationSec: 0 };
       cur.gmv += r.gmv;
       cur.orders += r.orders;
       cur.views += r.views;
       cur.estCommission += r.estCommission;
       cur.sessions += 1;
+      cur.durationSec += r.durationSec;
       map.set(ent.id, cur);
     }
     return [...map.entries()].map(([id, v]) => ({ id, ...v })).sort((a, b) => b.gmv - a.gmv);
   };
+
+  // Produk paling banyak terjual (agregat sold_items seluruh sesi terfilter)
+  const soldGroups = await db.liveSessionItem.groupBy({
+    by: ["productId"],
+    where: {
+      soldItems: { gt: 0 },
+      liveSessionId: { in: sessions.map((s) => s.id) },
+    },
+    _sum: { soldItems: true, itemClicks: true },
+    orderBy: { _sum: { soldItems: "desc" } },
+    take: 10,
+  });
+  const soldProducts = await db.product.findMany({
+    where: { id: { in: soldGroups.map((g) => g.productId) } },
+    select: { id: true, name: true, imageUrl: true, price: true, commissionRate: true },
+  });
+  const topProducts = soldGroups.map((g) => {
+    const p = soldProducts.find((x) => x.id === g.productId);
+    const sold = g._sum.soldItems ?? 0;
+    return {
+      productId: g.productId,
+      name: p?.name ?? "Produk",
+      imageUrl: p?.imageUrl ?? "",
+      price: p?.price ?? 0,
+      commissionRate: p?.commissionRate ?? 0,
+      sold,
+      clicks: g._sum.itemClicks ?? 0,
+      revenue: Math.round(sold * (p?.price ?? 0)),
+    };
+  });
 
   return NextResponse.json({
     ok: true,
@@ -104,5 +140,6 @@ export async function GET(req: Request) {
     sessions: rows,
     byStudio: byKey("studio"),
     byHost: byKey("host"),
+    topProducts,
   });
 }

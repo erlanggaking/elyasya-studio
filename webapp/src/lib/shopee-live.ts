@@ -5,7 +5,7 @@
  *  - uidFromShop      : mapping shop_id OAuth → uid pemilik (get_shop_base)
  *
  * Catatan: endpoint session detail live.shopee.co.id diblokir anti-bot untuk
- * server, tapi shop_page/live/* dan get_shop_base terbuka (diverifikasi).
+ * server, tapi endpoint ongoing, play_url, dan get_shop_base terbuka.
  */
 
 const UA =
@@ -20,6 +20,7 @@ async function fetchText(url: string): Promise<{ text: string; finalUrl: string 
         "User-Agent": UA,
         Accept: "text/html,application/json;q=0.9,*/*;q=0.8",
         "Accept-Language": "id-ID,id;q=0.9",
+        Referer: "https://live.shopee.co.id/",
       },
     });
     return { text: await res.text(), finalUrl: res.url || url };
@@ -31,6 +32,7 @@ async function fetchText(url: string): Promise<{ text: string; finalUrl: string 
 async function fetchJson(url: string): Promise<Record<string, unknown> | null> {
   try {
     const res = await fetch(url, {
+      cache: "no-store",
       signal: AbortSignal.timeout(8000),
       headers: { "User-Agent": UA, Accept: "application/json", Referer: "https://shopee.co.id/" },
     });
@@ -143,7 +145,43 @@ export async function probeOngoing(
   const title = String(
     (live.title as string) ?? (live.name as string) ?? ""
   );
-  return { sessionId, title, playUrl: findPlayUrl(live) };
+  return {
+    sessionId,
+    title,
+    playUrl: findPlayUrl(live) || (await getPublicPlayUrl(sessionId)),
+  };
+}
+
+/**
+ * Ambil URL CDN terbaru untuk sesi live. URL ini bertanda tangan dan cepat
+ * kedaluwarsa, jadi jangan mengandalkan nilai yang lama tersimpan di database.
+ */
+export async function getPublicPlayUrl(sessionId: string): Promise<string> {
+  if (!/^\d{4,}$/.test(sessionId)) return "";
+  const d = await fetchJson(
+    `https://live.shopee.co.id/api/v1/session/${encodeURIComponent(sessionId)}/play_url?_=${Date.now()}`
+  );
+  if (Number(d?.err_code ?? -1) !== 0) return "";
+  return findPlayUrl(d?.data ?? d);
+}
+
+/**
+ * Status hidup sesi live via endpoint play_url (terbuka untuk server):
+ *  err_code 0        → live (dapat URL stream)
+ *  err_code 3000068  → ErrorRoomSessionNotLiving = sudah berakhir
+ *  lainnya/gagal     → unknown (jangan ambil keputusan)
+ */
+export async function getSessionLiveState(
+  sessionId: string
+): Promise<{ state: "live" | "ended" | "unknown"; playUrl: string }> {
+  if (!/^\d{4,}$/.test(sessionId)) return { state: "unknown", playUrl: "" };
+  const d = await fetchJson(
+    `https://live.shopee.co.id/api/v1/session/${encodeURIComponent(sessionId)}/play_url?_=${Date.now()}`
+  );
+  const code = Number(d?.err_code ?? -1);
+  if (code === 0) return { state: "live", playUrl: findPlayUrl(d?.data ?? d) };
+  if (code === 3000068) return { state: "ended", playUrl: "" };
+  return { state: "unknown", playUrl: "" };
 }
 
 /** Mapping shop_id → uid pemilik shop (dipakai fallback saat setup). */

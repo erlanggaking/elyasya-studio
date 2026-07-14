@@ -13,6 +13,9 @@ type HostDetail = {
   liveUsername: string;
   liveShareLink: string;
   liveUid: string;
+  autoPinEnabled: boolean;
+  autoPinSeconds: number;
+  autoPinMode: string;
   studio: { id: string; name: string } | null;
   shopeeAccounts: { id: string; shopId: string; shopName: string; status: string; connectedAt: string }[];
   assignments: {
@@ -29,7 +32,7 @@ type HostDetail = {
     playUrl: string;
     startedAt: string | null;
     endedAt: string | null;
-    items: { id: string; itemNo: number; isShowing: boolean; product: { name: string; imageUrl: string; price: number } }[];
+    items: { id: string; itemNo: number; isShowing: boolean; soldItems: number; itemClicks: number; product: { name: string; imageUrl: string; price: number } }[];
     snapshots: { gmv: number; orders: number; views: number }[];
   }[];
 };
@@ -49,20 +52,77 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
   const [liveLink, setLiveLink] = useState("");
   const [shareLink, setShareLink] = useState("");
   const [playerKey, setPlayerKey] = useState(0);
-  // Alur konek mock: tab login affiliate dibuka → host login → tandai terhubung.
-  const [pendingConnect, setPendingConnect] = useState<string | null>(null);
+  const [connectBusy, setConnectBusy] = useState(false);
+  const [autoPin, setAutoPin] = useState({ enabled: false, seconds: 60, mode: "urut" });
 
   const load = useCallback(async () => {
     const r = await api<{ host: HostDetail }>(`/api/hosts/${hostId}`);
     if (r.ok) {
       setHost(r.host);
       setShareLink(r.host.liveShareLink || "");
+      setAutoPin({
+        enabled: r.host.autoPinEnabled,
+        seconds: r.host.autoPinSeconds || 60,
+        mode: r.host.autoPinMode || "urut",
+      });
     }
   }, [hostId]);
 
+  async function saveAutoPin(next: { enabled: boolean; seconds: number; mode: string }) {
+    setAutoPin(next);
+    const r = await api(`/api/hosts/${hostId}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        autoPinEnabled: next.enabled,
+        autoPinSeconds: next.seconds,
+        autoPinMode: next.mode,
+      }),
+    });
+    if (r.ok) setMsg(next.enabled
+      ? `✅ Auto-pin aktif — ganti produk tiap ${next.seconds} dtk (${next.mode})`
+      : "Auto-pin dimatikan");
+    else setMsg(`❌ ${r.error}`);
+  }
+
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    const cleanUrl = new URL(window.location.href);
+    const result = cleanUrl.searchParams.get("shopee");
+    if (result === "connected") {
+      setMsg("✅ Akun Shopee berhasil diotorisasi dan terhubung ke webapp");
+      load();
+    }
+    if (result === "failed") {
+      setMsg("❌ Otorisasi Shopee gagal. Coba reconnect atau periksa konfigurasi callback Partner App.");
+    }
+    if (result === "denied") {
+      setMsg("❌ Otorisasi Shopee dibatalkan. Login Google saja belum menghubungkan akun ke webapp.");
+    }
+
+    if (result) {
+      cleanUrl.searchParams.delete("shopee");
+      window.history.replaceState({}, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+    }
+  }, [load]);
+
   const activeSession = host?.liveSessions.find((s) => s.status === "live") ?? null;
+
+  // Jam durasi live berjalan (tick tiap detik selama sesi aktif)
+  const [nowTs, setNowTs] = useState(Date.now());
+  useEffect(() => {
+    if (!activeSession?.startedAt) return;
+    const t = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [activeSession?.startedAt]);
+  const liveClock = (() => {
+    if (!activeSession?.startedAt) return "";
+    const s = Math.max(0, Math.floor((nowTs - new Date(activeSession.startedAt).getTime()) / 1000));
+    const h = String(Math.floor(s / 3600)).padStart(2, "0");
+    const m = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+    const d = String(s % 60).padStart(2, "0");
+    return `${h}:${m}:${d}`;
+  })();
 
   // Auto-deteksi live: saat tidak ada sesi aktif, cek tiap 20 dtk apakah host
   // mulai live (via uid tersimpan). Saat live, verifikasi tiap 60 dtk apakah
@@ -99,14 +159,16 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
   }, [activeSession]);
 
   async function connectShopee() {
-    const r = await api<{ authorizeUrl: string; mock: boolean }>(`/api/hosts/${hostId}/shopee/connect`, { method: "POST" });
-    if (!r.ok) { setMsg(`❌ ${r.error}`); return; }
-    if (r.mock) {
-      window.open("https://affiliate.shopee.co.id/", "_blank", "noopener");
-      setPendingConnect(r.authorizeUrl);
-    } else {
-      window.location.href = r.authorizeUrl;
+    setConnectBusy(true);
+    setMsg("");
+    const r = await api<{ authorizeUrl: string }>(`/api/hosts/${hostId}/shopee/connect`, { method: "POST" });
+    if (!r.ok) {
+      setConnectBusy(false);
+      setMsg(`❌ ${r.error}`);
+      return;
     }
+    // Halaman Open Platform Shopee menangani login dan persetujuan OAuth.
+    window.location.assign(r.authorizeUrl);
   }
 
   async function saveShareLink() {
@@ -135,12 +197,27 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
   }
 
   async function endLive() {
-    if (!activeSession || !confirm("Akhiri sesi live ini?")) return;
+    if (!activeSession || !confirm("Hentikan live host sekarang? Siaran di HP host akan berakhir.")) return;
     setBusy(true);
-    const r = await api(`/api/live-sessions/${activeSession.id}/end`, { method: "POST" });
+    const r = await api<{ needsForce?: boolean; remoteEnded?: boolean }>(
+      `/api/live-sessions/${activeSession.id}/end`, { method: "POST", body: JSON.stringify({}) });
     setBusy(false);
-    if (r.ok) { setMsg("✅ Sesi diakhiri"); setMetrics(null); load(); }
-    else setMsg(`❌ ${r.error}`);
+    if (r.ok) {
+      setMsg(r.remoteEnded ? "✅ Live host dihentikan (terverifikasi di Shopee)" : "✅ Sesi diakhiri");
+      setMetrics(null);
+      load();
+      return;
+    }
+    // Perintah stop gagal — tawarkan tutup sesi di panel saja (live asli dibiarkan).
+    if (r.needsForce && confirm(`${r.error}\n\nTutup sesi di panel saja? (live di HP host tetap berjalan)`)) {
+      const f = await api(`/api/live-sessions/${activeSession.id}/end`, {
+        method: "POST", body: JSON.stringify({ force: true }),
+      });
+      if (f.ok) { setMsg("Sesi ditutup di panel — live asli tidak dihentikan"); setMetrics(null); load(); }
+      else setMsg(`❌ ${f.error}`);
+      return;
+    }
+    setMsg(`❌ ${r.error}`);
   }
 
   // Push satu produk assigned langsung ke keranjang + pin sekaligus.
@@ -187,7 +264,14 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
               else setMsg(`❌ ${r.error}`);
             }}
             className="text-zinc-600 hover:text-orange-400 text-base">✎</button>
-          {activeSession && <span className="text-xs font-bold bg-red-600 rounded px-2 py-1 animate-pulse">SEDANG LIVE</span>}
+          {activeSession && (
+            <>
+              <span className="text-xs font-bold bg-red-600 rounded px-2 py-1 animate-pulse">SEDANG LIVE</span>
+              <span className="text-sm font-mono bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-orange-300">
+                ⏱ {liveClock}
+              </span>
+            </>
+          )}
         </div>
         <p className="text-zinc-400 text-sm">{host.note || host.contact || "Host"}</p>
       </div>
@@ -198,7 +282,7 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
       <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="font-semibold">Akun Shopee Affiliate</h2>
+            <h2 className="font-semibold">Akun Seller Shopee</h2>
             {host.shopeeAccounts.length === 0 ? (
               <p className="text-sm text-zinc-500 mt-1">Belum ada akun terhubung.</p>
             ) : (
@@ -218,9 +302,9 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
               </div>
             )}
           </div>
-          <button onClick={connectShopee}
-            className="bg-orange-600 hover:bg-orange-500 rounded-lg px-4 py-2 text-sm font-semibold">
-            {connected ? "Reconnect" : "Konek Host"}
+          <button onClick={connectShopee} disabled={connectBusy}
+            className="bg-orange-600 hover:bg-orange-500 disabled:cursor-wait disabled:opacity-60 rounded-lg px-4 py-2 text-sm font-semibold">
+            {connectBusy ? "Membuka Shopee…" : connected ? "Hubungkan ulang" : "Hubungkan Shopee"}
           </button>
         </div>
 
@@ -244,22 +328,10 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
           </p>
         </div>
 
-        {pendingConnect && (
-          <div className="rounded-lg border border-orange-600/40 bg-orange-600/10 p-4 text-sm space-y-3">
-            <p className="font-medium">Tab login Shopee Affiliate sudah dibuka.</p>
-            <ol className="list-decimal list-inside text-zinc-300 space-y-1 text-[13px]">
-              <li>Minta <b>{host.name}</b> login dengan akun Shopee Affiliate miliknya di tab tersebut.</li>
-              <li>Setelah berhasil login, kembali ke sini dan klik tombol di bawah.</li>
-            </ol>
-            <div className="flex gap-2">
-              <button onClick={() => { window.location.href = pendingConnect; }}
-                className="bg-emerald-600 hover:bg-emerald-500 rounded-lg px-4 py-2 text-sm font-semibold">
-                ✓ Host Sudah Login — Tandai Terhubung
-              </button>
-              <button onClick={() => setPendingConnect(null)} className="px-3 py-2 text-sm text-zinc-400">Batal</button>
-            </div>
-          </div>
-        )}
+        <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 text-[11px] text-zinc-400 space-y-1">
+          <p>Login dilakukan di halaman resmi Shopee Open Platform menggunakan username/no. HP/email dan password akun Seller Shopee.</p>
+          <p>Tombol Google tidak tersedia pada halaman otorisasi ini. Jika akun biasa masuk lewat Google, buat/reset password Shopee terlebih dahulu; pilih <b className="text-zinc-300">Switch to Main account</b> bila halaman Shopee memintanya.</p>
+        </div>
       </section>
 
       {/* Kontrol sesi live */}
@@ -269,7 +341,7 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
           {activeSession && (
             <button onClick={endLive} disabled={busy}
               className="bg-red-600 hover:bg-red-500 disabled:opacity-50 rounded-lg px-4 py-2 text-sm font-semibold">
-              ■ Akhiri Sesi
+              ■ Akhiri Live
             </button>
           )}
         </div>
@@ -300,7 +372,7 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
               {/* Player — murni video, tidak pernah memuat halaman Shopee */}
               <div className="lg:col-span-2 space-y-2">
                 <div className="rounded-xl overflow-hidden bg-black border border-zinc-800 aspect-[9/16] max-h-[70vh] mx-auto w-full">
-                  <LivePlayer key={playerKey} playUrl={activeSession.playUrl} />
+                  <LivePlayer key={playerKey} playUrl={activeSession.playUrl} sessionId={activeSession.id} />
                 </div>
                 <div className="flex justify-center gap-4 text-xs">
                   <button onClick={() => setPlayerKey((k) => k + 1)}
@@ -313,7 +385,29 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
               {/* Produk: keranjang + assigned dengan pin */}
               <div className="lg:col-span-3 space-y-4">
                 <div>
-                  <h3 className="text-sm font-semibold mb-2">Keranjang Live ({activeSession.items.length})</h3>
+                  <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                    <h3 className="text-sm font-semibold">Keranjang Live ({activeSession.items.length})</h3>
+                    {/* Auto-pin: rotasi produk otomatis */}
+                    <div className="flex items-center gap-2 text-xs bg-zinc-800/60 rounded-lg px-3 py-1.5">
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" className="accent-orange-500" checked={autoPin.enabled}
+                          onChange={(e) => saveAutoPin({ ...autoPin, enabled: e.target.checked })} />
+                        <span className="font-medium">Auto-pin</span>
+                      </label>
+                      <span className="text-zinc-500">tiap</span>
+                      <input type="number" min={10} max={3600} value={autoPin.seconds}
+                        onChange={(e) => setAutoPin({ ...autoPin, seconds: Number(e.target.value) || 60 })}
+                        onBlur={() => saveAutoPin(autoPin)}
+                        className="w-16 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-center outline-none focus:border-orange-500" />
+                      <span className="text-zinc-500">dtk</span>
+                      <select value={autoPin.mode}
+                        onChange={(e) => saveAutoPin({ ...autoPin, mode: e.target.value })}
+                        className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 outline-none">
+                        <option value="urut">Urut</option>
+                        <option value="acak">Acak</option>
+                      </select>
+                    </div>
+                  </div>
                   <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
                     {activeSession.items.map((it) => (
                       <div key={it.id}
@@ -324,6 +418,9 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
                           <img src={it.product.imageUrl} alt="" className="w-8 h-8 rounded object-cover" />
                         ) : <span className="w-8 h-8 rounded bg-zinc-700 flex items-center justify-center text-xs">📦</span>}
                         <span className="flex-1 line-clamp-1">{it.product.name}</span>
+                        {it.soldItems > 0 && (
+                          <span className="text-emerald-400 text-xs font-semibold whitespace-nowrap">🛒 {it.soldItems} terjual</span>
+                        )}
                         <span className="text-zinc-400 text-xs">{rupiah(it.product.price)}</span>
                         {it.isShowing ? (
                           <span className="text-[10px] font-bold text-orange-400 whitespace-nowrap">📌 DIPIN</span>
@@ -340,6 +437,27 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
                     )}
                   </div>
                 </div>
+
+                {/* Produk terjual di live ini (metrik per-item, sync tiap 2 menit) */}
+                {activeSession.items.some((i) => i.soldItems > 0) && (
+                  <div>
+                    <h3 className="text-sm font-semibold mb-2">🏆 Terjual di Live Ini</h3>
+                    <div className="space-y-1">
+                      {[...activeSession.items]
+                        .filter((i) => i.soldItems > 0)
+                        .sort((a, b) => b.soldItems - a.soldItems)
+                        .slice(0, 5)
+                        .map((it, idx) => (
+                          <div key={it.id} className="flex items-center gap-2 text-sm bg-emerald-950/40 border border-emerald-900/40 rounded-lg px-3 py-1.5">
+                            <span className="text-emerald-400 font-bold text-xs w-4">{idx + 1}.</span>
+                            <span className="flex-1 line-clamp-1">{it.product.name}</span>
+                            <span className="text-emerald-400 font-semibold text-xs">{it.soldItems} terjual</span>
+                            <span className="text-zinc-400 text-xs">{rupiah(it.soldItems * it.product.price)}</span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <h3 className="text-sm font-semibold mb-2">Produk Ter-assign ({host.assignments.length})</h3>

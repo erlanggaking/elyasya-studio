@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { getActiveAccount } from "@/lib/shopee-account";
 import { getSessionDetail, SHOPEE_MOCK } from "@/lib/shopee";
-import { probeOngoing, uidFromShop } from "@/lib/shopee-live";
+import { getPublicPlayUrl, getSessionLiveState, probeOngoing, uidFromShop } from "@/lib/shopee-live";
 import { pushPendingAssignments } from "@/lib/live-cart";
 
 // Auto-deteksi live host (dipanggil panel saat load + polling):
@@ -48,17 +48,26 @@ export async function POST(
         data: { status: "ended", endedAt: new Date() },
       });
     } else {
-      // Probe bawa play url segar untuk sesi yang sama → simpan.
-      if (ongoing?.playUrl && ongoing.playUrl !== active.playUrl) {
+      // Cek liveness via endpoint publik (terbuka untuk server, tanpa token):
+      // "ended" = pasti berakhir → tutup sesi; "live" = segarkan play url.
+      const liveState = await getSessionLiveState(active.shopeeSessionId);
+      if (liveState.state === "ended") {
+        await db.liveSession.update({
+          where: { id: active.id },
+          data: { status: "ended", endedAt: new Date() },
+        });
+        return NextResponse.json({ ok: true, live: false, ended: true });
+      }
+      if (liveState.playUrl && liveState.playUrl !== active.playUrl) {
         const updated = await db.liveSession.update({
           where: { id: active.id },
-          data: { playUrl: ongoing.playUrl },
+          data: { playUrl: liveState.playUrl },
         });
         return NextResponse.json({ ok: true, live: true, session: updated });
       }
       // Verifikasi via partner API: status asli + play_url untuk player panel.
       // (status get_session_detail: 1 = live, 2 = sudah berakhir)
-      if (!SHOPEE_MOCK && account?.userId) {
+      if (liveState.state === "unknown" && !SHOPEE_MOCK && account?.userId) {
         try {
           const detail = await getSessionDetail(
             { accessToken: account.accessToken, shopId: account.shopId, userId: account.userId },
@@ -72,8 +81,8 @@ export async function POST(
             });
             return NextResponse.json({ ok: true, live: false, ended: true });
           }
-          // Partner API hanya mengisi kalau masih kosong (URL-nya tidak valid
-          // untuk live dari aplikasi HP — jangan menimpa hasil capture browser).
+          // Partner API hanya mengisi kalau masih kosong. URL publik di atas tetap
+          // diprioritaskan untuk live dari aplikasi HP.
           const playUrl = String(
             detail?.stream_url_list?.[0]?.play_url ?? detail?.stream_url_list?.play_url ?? ""
           );
@@ -102,7 +111,7 @@ export async function POST(
     }
     // Ambil play_url sekalian supaya player langsung tampil — prioritas dari
     // probe publik (valid untuk live aplikasi HP), partner API sebagai cadangan.
-    let playUrl = ongoing.playUrl || "";
+    let playUrl = ongoing.playUrl || (await getPublicPlayUrl(ongoing.sessionId));
     if (!playUrl && !SHOPEE_MOCK && account?.userId) {
       try {
         const detail = await getSessionDetail(

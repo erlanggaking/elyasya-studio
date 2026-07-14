@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { exchangeCode } from "@/lib/shopee";
+import { exchangeCode, readOAuthState } from "@/lib/shopee";
 import { uidFromShop } from "@/lib/shopee-live";
 
 // Origin publik app. Di belakang proxy (nginx), req.url terbaca sebagai origin
@@ -17,12 +17,13 @@ function publicOrigin(req: Request): string {
   }
 }
 
-// Redirect balik dari Shopee: ?code=...&shop_id=...&state=<hostId>
+// Redirect balik dari Shopee: ?code=...&shop_id=...&state=<signed-state>
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const origin = publicOrigin(req);
   const code = url.searchParams.get("code") || "";
   const shopId = url.searchParams.get("shop_id") || "";
+  const oauthError = url.searchParams.get("error") || url.searchParams.get("error_auth") || "";
   // API livestream butuh user_id streamer. Callback Shopee hanya mengirim
   // shop_id (diverifikasi dari log), jadi user_id diturunkan dari uid pemilik
   // shop via get_shop_base — terbukti diterima endpoint livestream.
@@ -30,7 +31,7 @@ export async function GET(req: Request) {
     url.searchParams.get("user_id") ||
     url.searchParams.get("main_account_id") ||
     "";
-  const hostId = url.searchParams.get("state") || "";
+  const hostId = readOAuthState(url.searchParams.get("state") || "") || "";
 
   // Log semua param (tanpa code) — untuk diagnosa bentuk callback Shopee.
   const debugParams = Object.fromEntries(
@@ -38,13 +39,17 @@ export async function GET(req: Request) {
   );
   console.log("[shopee/callback] params:", JSON.stringify(debugParams));
 
-  if (!code || !shopId || !hostId) {
-    return NextResponse.redirect(new URL("/setting?shopee=error", origin));
+  if (!hostId) {
+    return NextResponse.redirect(new URL("/setting?shopee=invalid_state", origin));
   }
 
   const host = await db.host.findUnique({ where: { id: hostId } });
   if (!host) {
     return NextResponse.redirect(new URL("/setting?shopee=hostnotfound", origin));
+  }
+
+  if (oauthError || !code || !shopId) {
+    return NextResponse.redirect(new URL(`/live/host/${hostId}?shopee=denied`, origin));
   }
 
   try {

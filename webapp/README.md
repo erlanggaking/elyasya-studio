@@ -31,7 +31,11 @@ SHOPEE_PARTNER_ID="..."
 SHOPEE_PARTNER_KEY="..."
 SHOPEE_API_BASE="https://partner.shopeemobile.com"
 SHOPEE_REDIRECT_URL="https://elyasyastudio.com/api/shopee/callback"
+# Opsional; gunakan nilai stabil yang sama di semua instance aplikasi.
+SHOPEE_STATE_SECRET="..."
 ```
+
+Daftarkan `SHOPEE_REDIRECT_URL` yang sama persis di Partner App Shopee. Tombol **Konek Host** harus menyelesaikan halaman otorisasi Partner App sampai browser kembali ke URL callback; login Google pada halaman Shopee saja hanya membuat sesi Shopee dan belum menghubungkan akun ke webapp.
 
 Tidak ada perubahan kode — client di `src/lib/shopee.ts` otomatis pindah ke mode real (signature HMAC-SHA256 v2 sudah diimplementasikan).
 

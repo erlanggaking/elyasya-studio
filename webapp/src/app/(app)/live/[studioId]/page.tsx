@@ -31,9 +31,12 @@ type StudioDetail = {
   }[];
 };
 
+type TopProduct = { productId: string; name: string; imageUrl: string; sold: number; revenue: number };
+
 export default function StudioDetailPage({ params }: { params: Promise<{ studioId: string }> }) {
   const { studioId } = use(params);
   const [studio, setStudio] = useState<StudioDetail | null>(null);
+  const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [tab, setTab] = useState<"host" | "produk" | "sesi">("host");
   const [showAddHost, setShowAddHost] = useState(false);
   const [allHosts, setAllHosts] = useState<{ id: string; name: string; studio: { name: string } | null }[]>([]);
@@ -41,8 +44,11 @@ export default function StudioDetailPage({ params }: { params: Promise<{ studioI
   const [newHostName, setNewHostName] = useState("");
 
   const load = useCallback(async () => {
-    const r = await api<{ studio: StudioDetail }>(`/api/studios/${studioId}`);
-    if (r.ok) setStudio(r.studio);
+    const r = await api<{ studio: StudioDetail; topProducts: TopProduct[] }>(`/api/studios/${studioId}`);
+    if (r.ok) {
+      setStudio(r.studio);
+      setTopProducts(r.topProducts ?? []);
+    }
   }, [studioId]);
 
   useEffect(() => { load(); }, [load]);
@@ -100,6 +106,29 @@ export default function StudioDetailPage({ params }: { params: Promise<{ studioI
         <h1 className="text-2xl font-bold mt-1">{studio.name}</h1>
         <p className="text-zinc-400 text-sm">{studio.location || "Tanpa lokasi"}</p>
       </div>
+
+      {/* Produk paling banyak terjual di studio ini */}
+      {topProducts.length > 0 && (
+        <section className="rounded-xl border border-emerald-900/40 bg-emerald-950/30 p-4">
+          <h2 className="text-sm font-semibold mb-2">🏆 Produk Paling Banyak Terjual</h2>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
+            {topProducts.map((p, idx) => (
+              <div key={p.productId} className="flex items-center gap-3 text-sm bg-zinc-900/60 rounded-lg px-3 py-2">
+                <span className="text-emerald-400 font-bold text-xs w-4">{idx + 1}.</span>
+                {p.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={p.imageUrl} alt="" className="w-8 h-8 rounded object-cover" />
+                ) : <span className="w-8 h-8 rounded bg-zinc-800 flex items-center justify-center text-xs">📦</span>}
+                <span className="flex-1 line-clamp-1">{p.name}</span>
+                <div className="text-right">
+                  <div className="text-emerald-400 font-semibold text-xs">{p.sold} terjual</div>
+                  <div className="text-zinc-400 text-[11px]">{rupiah(p.revenue)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="flex gap-2">
         {([

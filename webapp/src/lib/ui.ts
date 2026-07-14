@@ -12,6 +12,15 @@ export function num(n: number) {
   return String(Math.round(n));
 }
 
+export function durasi(sec: number) {
+  if (!Number.isFinite(sec) || sec <= 0) return "—";
+  const j = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (j > 0) return `${j}j ${m}m`;
+  const d = Math.floor(sec % 60);
+  return m > 0 ? `${m}m ${d}d` : `${d}d`;
+}
+
 export function tanggal(d: string | Date | null | undefined) {
   if (!d) return "—";
   return new Date(d).toLocaleString("id-ID", {

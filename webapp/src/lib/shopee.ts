@@ -16,8 +16,23 @@ const PARTNER_KEY = process.env.SHOPEE_PARTNER_KEY || "";
 const API_BASE = process.env.SHOPEE_API_BASE || "https://partner.shopeemobile.com";
 const REDIRECT_URL =
   process.env.SHOPEE_REDIRECT_URL || "http://localhost:3000/api/shopee/callback";
+const STATE_SECRET =
+  process.env.SHOPEE_STATE_SECRET || process.env.AUTH_SECRET || PARTNER_KEY || "elyasya-dev-oauth-state";
 
 export const SHOPEE_MOCK = !PARTNER_ID || !PARTNER_KEY;
+
+function redirectUrl() {
+  let url: URL;
+  try {
+    url = new URL(REDIRECT_URL);
+  } catch {
+    throw new Error("SHOPEE_REDIRECT_URL bukan URL yang valid");
+  }
+  if (url.search || url.hash) {
+    throw new Error("SHOPEE_REDIRECT_URL tidak boleh memiliki query atau hash");
+  }
+  return url;
+}
 
 // ---------- Signature & transport (mode REAL) --------------------------------
 
@@ -71,11 +86,53 @@ async function callShopee(
 
 // ---------- OAuth ------------------------------------------------------------
 
+function createOAuthState(hostId: string) {
+  const expiresAt = Math.floor(Date.now() / 1000) + 15 * 60;
+  const payload = Buffer.from(
+    JSON.stringify({ hostId, expiresAt, nonce: crypto.randomBytes(12).toString("hex") })
+  ).toString("base64url");
+  const signature = crypto.createHmac("sha256", STATE_SECRET).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+/** Verifikasi state callback agar akun tidak bisa ditautkan ke host lewat URL palsu. */
+export function readOAuthState(state: string): string | null {
+  const [payload, suppliedSignature] = state.split(".");
+  if (!payload || !suppliedSignature) return null;
+
+  const expectedSignature = crypto
+    .createHmac("sha256", STATE_SECRET)
+    .update(payload)
+    .digest("base64url");
+  const supplied = Buffer.from(suppliedSignature);
+  const expected = Buffer.from(expectedSignature);
+  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return null;
+
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+      hostId?: unknown;
+      expiresAt?: unknown;
+    };
+    if (typeof parsed.hostId !== "string" || !parsed.hostId) return null;
+    if (typeof parsed.expiresAt !== "number" || parsed.expiresAt < Math.floor(Date.now() / 1000)) {
+      return null;
+    }
+    return parsed.hostId;
+  } catch {
+    return null;
+  }
+}
+
 export function buildAuthorizeUrl(state: string) {
+  const signedState = createOAuthState(state);
+  const callbackUrl = redirectUrl();
+  callbackUrl.searchParams.set("state", signedState);
   if (SHOPEE_MOCK) {
     // Mode mock: langsung ke callback lokal dengan shop_id palsu.
     const shopId = String(100000 + Math.floor(Math.random() * 900000));
-    return `${REDIRECT_URL}?code=MOCKCODE&shop_id=${shopId}&state=${encodeURIComponent(state)}`;
+    callbackUrl.searchParams.set("code", "MOCKCODE");
+    callbackUrl.searchParams.set("shop_id", shopId);
+    return callbackUrl.toString();
   }
   const path = "/api/v2/shop/auth_partner";
   const timestamp = Math.floor(Date.now() / 1000);
@@ -83,7 +140,7 @@ export function buildAuthorizeUrl(state: string) {
     partner_id: PARTNER_ID,
     timestamp: String(timestamp),
     sign: sign(path, timestamp),
-    redirect: `${REDIRECT_URL}?state=${encodeURIComponent(state)}`,
+    redirect: callbackUrl.toString(),
   });
   return `${API_BASE}${path}?${params}`;
 }
@@ -295,6 +352,32 @@ export async function updateShowItem(
     shopId: ctx.shopId,
     userId: ctx.userId ?? "",
     body: { session_id: Number(sessionId), ...item },
+  });
+}
+
+/** Metrik per-item keranjang live: item_clicks, atc, sold_items (per halaman). */
+export async function getSessionItemMetric(
+  ctx: ShopeeCtx,
+  sessionId: string | number,
+  offset = 0,
+  pageSize = 100
+): Promise<{
+  more: boolean;
+  next_offset: number;
+  list: Array<{
+    item: { item_id: number; shop_id: number; name: string; image_url: string };
+    metric: { item_clicks: number; atc: number; sold_items: number };
+  }>;
+}> {
+  if (SHOPEE_MOCK) {
+    return { more: false, next_offset: 0, list: [] };
+  }
+  return callShopee("/api/v2/livestream/get_session_item_metric", {
+    method: "GET",
+    accessToken: ctx.accessToken,
+    shopId: ctx.shopId,
+    userId: ctx.userId ?? "",
+    query: { session_id: sessionId, offset, page_size: pageSize },
   });
 }
 
