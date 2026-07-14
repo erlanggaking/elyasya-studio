@@ -19,6 +19,8 @@ export default function LivePage() {
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
   const [error, setError] = useState("");
+  const [editStudio, setEditStudio] = useState<Studio | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", location: "" });
 
   const load = useCallback(async () => {
     const r = await api<{ studios: Studio[] }>("/api/studios");
@@ -26,6 +28,24 @@ export default function LivePage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  function openEditStudio(s: Studio) {
+    setEditStudio(s);
+    setEditForm({ name: s.name, location: s.location });
+    setError("");
+  }
+
+  async function saveEditStudio() {
+    if (!editStudio || !editForm.name.trim()) return;
+    const r = await api(`/api/studios/${editStudio.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: editForm.name.trim(), location: editForm.location }),
+    });
+    if (r.ok) {
+      setEditStudio(null);
+      load();
+    } else setError(r.error || "Gagal menyimpan");
+  }
 
   async function deleteStudio(s: Studio) {
     if (s.liveNow > 0) {
@@ -82,6 +102,11 @@ export default function LivePage() {
                     {s.liveNow} LIVE
                   </span>
                 )}
+                <button title="Edit studio"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); openEditStudio(s); }}
+                  className="text-zinc-600 hover:text-orange-400 text-sm leading-none p-1 -m-1">
+                  ✎
+                </button>
                 <button title="Hapus studio"
                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteStudio(s); }}
                   className="text-zinc-600 hover:text-red-400 text-sm leading-none p-1 -m-1">
@@ -107,6 +132,35 @@ export default function LivePage() {
           </div>
         )}
       </div>
+
+      {/* Modal edit studio */}
+      {editStudio && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setEditStudio(null)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-bold text-lg mb-4">Edit Studio</h2>
+            <div className="space-y-3 text-sm">
+              <div>
+                <label className="text-xs text-zinc-400">Nama studio *</label>
+                <input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500" />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400">Lokasi / deskripsi</label>
+                <input value={editForm.location} onChange={(e) => setEditForm({ ...editForm, location: e.target.value })}
+                  className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500" />
+              </div>
+              {error && <p className="text-red-400">{error}</p>}
+            </div>
+            <div className="flex gap-2 justify-end mt-5">
+              <button onClick={() => setEditStudio(null)} className="px-4 py-2 text-sm text-zinc-400">Batal</button>
+              <button onClick={saveEditStudio} disabled={!editForm.name.trim()}
+                className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 rounded-lg px-4 py-2 text-sm font-semibold">
+                Simpan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showNew && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowNew(false)}>
