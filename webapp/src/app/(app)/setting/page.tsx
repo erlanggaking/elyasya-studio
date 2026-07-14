@@ -23,6 +23,8 @@ export default function SettingPage() {
   const [selfId, setSelfId] = useState("");
   const [showNewAccount, setShowNewAccount] = useState(false);
   const [newAccount, setNewAccount] = useState({ name: "", email: "", password: "" });
+  const [editAccount, setEditAccount] = useState<Account | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", email: "", password: "" });
   const [hosts, setHosts] = useState<Host[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -81,6 +83,30 @@ export default function SettingPage() {
       setMsg(`✅ Akun ${newAccount.email} dibuat — bisa langsung dipakai login`);
       setNewAccount({ name: "", email: "", password: "" });
       loadAccounts();
+    } else setMsg(`❌ ${r.error}`);
+  }
+
+  function openEditAccount(a: Account) {
+    setEditAccount(a);
+    setEditForm({ name: a.name, email: a.email, password: "" });
+  }
+
+  async function saveEditAccount() {
+    if (!editAccount) return;
+    const r = await api("/api/users", {
+      method: "PATCH",
+      body: JSON.stringify({
+        id: editAccount.id,
+        name: editForm.name,
+        email: editForm.email,
+        ...(editForm.password ? { password: editForm.password } : {}),
+      }),
+    });
+    if (r.ok) {
+      setMsg(`✅ Akun ${editForm.email} diperbarui${editForm.password ? " (password diganti)" : ""}`);
+      setEditAccount(null);
+      loadAccounts();
+      if (editAccount.id === selfId) loadProfile();
     } else setMsg(`❌ ${r.error}`);
   }
 
@@ -187,7 +213,9 @@ export default function SettingPage() {
                   </td>
                   <td className="px-4 py-3 text-zinc-400">{a.email}</td>
                   <td className="px-4 py-3 text-zinc-400">{new Date(a.createdAt).toLocaleDateString("id-ID")}</td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right space-x-3">
+                    <button onClick={() => openEditAccount(a)}
+                      className="text-xs text-zinc-400 hover:text-orange-400">Edit</button>
                     {a.id !== selfId && (
                       <button onClick={() => deleteAccount(a)}
                         className="text-xs text-red-400/70 hover:text-red-400">Hapus</button>
@@ -311,6 +339,43 @@ export default function SettingPage() {
                 disabled={!newAccount.name.trim() || !newAccount.email.trim() || newAccount.password.length < 8}
                 className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 rounded-lg px-4 py-2 text-sm font-semibold">
                 Buat Akun
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal edit akun */}
+      {editAccount && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setEditAccount(null)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-bold text-lg mb-1">Edit Akun</h2>
+            <p className="text-zinc-400 text-sm mb-4">
+              Ubah nama/email, atau isi password baru untuk mengganti password akun ini.
+            </p>
+            <div className="space-y-3 text-sm">
+              <div>
+                <label className="text-xs text-zinc-400">Nama *</label>
+                <input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500" />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400">Email *</label>
+                <input type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                  className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500" />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400">Password baru (min. 8 — kosongkan jika tidak diganti)</label>
+                <input type="password" value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                  className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500" />
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end mt-5">
+              <button onClick={() => setEditAccount(null)} className="px-4 py-2 text-sm text-zinc-400">Batal</button>
+              <button onClick={saveEditAccount}
+                disabled={!editForm.name.trim() || !editForm.email.trim() || (editForm.password.length > 0 && editForm.password.length < 8)}
+                className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 rounded-lg px-4 py-2 text-sm font-semibold">
+                Simpan
               </button>
             </div>
           </div>
