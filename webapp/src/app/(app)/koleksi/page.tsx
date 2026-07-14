@@ -208,6 +208,30 @@ export default function KoleksiPage() {
     load();
   }
 
+  // Pilih semua produk sesuai filter aktif — lintas halaman (loop max 100/halaman)
+  async function selectAll() {
+    if (selected.size >= total && total > 0) {
+      setSelected(new Set());
+      return;
+    }
+    const ids: string[] = [];
+    let p = 1;
+    for (;;) {
+      const qs = new URLSearchParams({ page: String(p), pageSize: "100" });
+      if (q) qs.set("q", q);
+      if (tag) qs.set("tag", tag);
+      if (sent) qs.set("sent", sent);
+      if (minComm) qs.set("minComm", minComm);
+      if (activeFolder) qs.set("folder", activeFolder);
+      const r = await api<{ entries: Entry[]; total: number }>(`/api/collection?${qs}`);
+      if (!r.ok) break;
+      ids.push(...r.entries.map((e) => e.id));
+      if (p * 100 >= r.total || r.entries.length === 0) break;
+      p += 1;
+    }
+    setSelected(new Set(ids));
+  }
+
   function toggle(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -301,6 +325,14 @@ export default function KoleksiPage() {
           <option value="komisi">Urutkan: Komisi</option>
           <option value="rating">Urutkan: Rating</option>
         </select>
+        <button onClick={selectAll} disabled={total === 0}
+          className={`rounded-lg px-3 py-2 border transition disabled:opacity-40 ${
+            selected.size >= total && total > 0
+              ? "border-orange-500 bg-orange-600/10 text-orange-300"
+              : "border-zinc-800 bg-zinc-900 hover:border-zinc-600"
+          }`}>
+          {selected.size >= total && total > 0 ? `✕ Batal Pilih (${selected.size})` : `☑ Pilih Semua (${total})`}
+        </button>
       </div>
 
       {msg && <p className="text-sm">{msg}</p>}
