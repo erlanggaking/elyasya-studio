@@ -14,9 +14,15 @@ type Host = {
   shopee: { id: string; shopId: string; shopName: string; status: string }[];
 };
 
+type Account = { id: string; name: string; email: string; createdAt: string };
+
 export default function SettingPage() {
   const [profile, setProfile] = useState({ name: "", email: "" });
   const [pwd, setPwd] = useState({ currentPassword: "", newPassword: "" });
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [selfId, setSelfId] = useState("");
+  const [showNewAccount, setShowNewAccount] = useState(false);
+  const [newAccount, setNewAccount] = useState({ name: "", email: "", password: "" });
   const [hosts, setHosts] = useState<Host[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -42,8 +48,17 @@ export default function SettingPage() {
     }
   }, [page, q]);
 
+  const loadAccounts = useCallback(async () => {
+    const r = await api<{ users: Account[]; selfId: string }>("/api/users");
+    if (r.ok) {
+      setAccounts(r.users);
+      setSelfId(r.selfId);
+    }
+  }, []);
+
   useEffect(() => { loadProfile(); }, [loadProfile]);
   useEffect(() => { loadHosts(); }, [loadHosts]);
+  useEffect(() => { loadAccounts(); }, [loadAccounts]);
 
   async function saveProfile() {
     const r = await api("/api/profile", {
@@ -57,6 +72,25 @@ export default function SettingPage() {
     const r = await api("/api/profile", { method: "PATCH", body: JSON.stringify(pwd) });
     setMsg(r.ok ? "✅ Password diganti" : `❌ ${r.error}`);
     if (r.ok) setPwd({ currentPassword: "", newPassword: "" });
+  }
+
+  async function createAccount() {
+    const r = await api("/api/users", { method: "POST", body: JSON.stringify(newAccount) });
+    if (r.ok) {
+      setShowNewAccount(false);
+      setMsg(`✅ Akun ${newAccount.email} dibuat — bisa langsung dipakai login`);
+      setNewAccount({ name: "", email: "", password: "" });
+      loadAccounts();
+    } else setMsg(`❌ ${r.error}`);
+  }
+
+  async function deleteAccount(a: Account) {
+    if (!confirm(`Hapus akun "${a.email}"? Akun ini tidak bisa login lagi.`)) return;
+    const r = await api("/api/users", { method: "DELETE", body: JSON.stringify({ id: a.id }) });
+    if (r.ok) {
+      setMsg(`✅ Akun ${a.email} dihapus`);
+      loadAccounts();
+    } else setMsg(`❌ ${r.error}`);
   }
 
   async function createHost() {
@@ -121,6 +155,49 @@ export default function SettingPage() {
         <button onClick={changePassword} className="bg-zinc-800 hover:bg-zinc-700 rounded-lg px-4 py-2 text-sm font-medium">
           Ganti Password
         </button>
+      </section>
+
+      {/* Akun login dashboard */}
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">Akun Login Dashboard ({accounts.length})</h2>
+          <button onClick={() => setShowNewAccount(true)}
+            className="bg-orange-600 hover:bg-orange-500 rounded-lg px-4 py-2 text-sm font-semibold">
+            + Buat Akun
+          </button>
+        </div>
+        <p className="text-sm text-zinc-400">
+          Akun untuk masuk ke dashboard ini, mis. untuk admin lain atau tim studio.
+        </p>
+        <div className="rounded-lg border border-zinc-800 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-950/60 text-zinc-400 text-xs">
+              <tr>
+                {["Nama", "Email", "Dibuat", ""].map((h, i) => (
+                  <th key={i} className="text-left px-4 py-3 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-800/70">
+              {accounts.map((a) => (
+                <tr key={a.id} className="hover:bg-zinc-800/40">
+                  <td className="px-4 py-3 font-medium">
+                    {a.name}
+                    {a.id === selfId && <span className="ml-2 text-[10px] font-bold bg-orange-600/30 text-orange-300 rounded px-1.5 py-0.5">Anda</span>}
+                  </td>
+                  <td className="px-4 py-3 text-zinc-400">{a.email}</td>
+                  <td className="px-4 py-3 text-zinc-400">{new Date(a.createdAt).toLocaleDateString("id-ID")}</td>
+                  <td className="px-4 py-3 text-right">
+                    {a.id !== selfId && (
+                      <button onClick={() => deleteAccount(a)}
+                        className="text-xs text-red-400/70 hover:text-red-400">Hapus</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       {/* Kelola Host */}
@@ -204,6 +281,41 @@ export default function SettingPage() {
           supaya seluruh alur bisa dipakai tanpa approval Shopee.
         </p>
       </section>
+
+      {/* Modal buat akun */}
+      {showNewAccount && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowNewAccount(false)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-bold text-lg mb-1">Buat Akun Login</h2>
+            <p className="text-zinc-400 text-sm mb-4">Akun baru langsung bisa dipakai login ke dashboard.</p>
+            <div className="space-y-3 text-sm">
+              <div>
+                <label className="text-xs text-zinc-400">Nama *</label>
+                <input value={newAccount.name} onChange={(e) => setNewAccount({ ...newAccount, name: e.target.value })}
+                  className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500" />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400">Email *</label>
+                <input type="email" value={newAccount.email} onChange={(e) => setNewAccount({ ...newAccount, email: e.target.value })}
+                  className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500" />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400">Password (min. 8 karakter) *</label>
+                <input type="password" value={newAccount.password} onChange={(e) => setNewAccount({ ...newAccount, password: e.target.value })}
+                  className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500" />
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end mt-5">
+              <button onClick={() => setShowNewAccount(false)} className="px-4 py-2 text-sm text-zinc-400">Batal</button>
+              <button onClick={createAccount}
+                disabled={!newAccount.name.trim() || !newAccount.email.trim() || newAccount.password.length < 8}
+                className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 rounded-lg px-4 py-2 text-sm font-semibold">
+                Buat Akun
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal host baru */}
       {showNewHost && (
