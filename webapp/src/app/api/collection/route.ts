@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
+import { isSuperuser } from "@/lib/tenant";
 
 export async function GET(req: Request) {
   const user = await getSessionUser();
@@ -15,13 +16,16 @@ export async function GET(req: Request) {
   const sort = url.searchParams.get("sort") || ""; // trend | sold30d | komisi | rating
   const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
   const pageSize = Math.min(100, Number(url.searchParams.get("pageSize")) || 24);
+  const visibleAssignmentWhere = isSuperuser(user)
+    ? {}
+    : { OR: [{ host: { ownerId: user.id } }, { studio: { ownerId: user.id } }] };
 
   const where = {
     ...(q ? { product: { name: { contains: q } } } : {}),
     ...(tag ? { tags: { contains: tag } } : {}),
     ...(minComm > 0 ? { product: { ...(q ? { name: { contains: q } } : {}), commissionRate: { gte: minComm } } } : {}),
-    ...(sent === "yes" ? { assignments: { some: {} } } : {}),
-    ...(sent === "no" ? { assignments: { none: {} } } : {}),
+    ...(sent === "yes" ? { assignments: { some: visibleAssignmentWhere } } : {}),
+    ...(sent === "no" ? { assignments: { none: visibleAssignmentWhere } } : {}),
     ...(folder === "none" ? { folderId: null } : folder ? { folderId: folder } : {}),
   };
 
@@ -42,7 +46,7 @@ export async function GET(req: Request) {
       include: {
         product: true,
         assignments: {
-          where: { status: { not: "removed" } },
+          where: { status: { not: "removed" }, ...visibleAssignmentWhere },
           include: {
             studio: { select: { name: true } },
             host: { select: { name: true } },
@@ -83,44 +87,73 @@ export async function GET(req: Request) {
   });
 }
 
-// Tambah produk manual ke koleksi
+// Tambah produk ke koleksi — manual (itemId+shopId+nama) atau produk yang
+// sudah ada di DB via productId (mis. dari daftar terlaris di dashboard).
+// folderId opsional: langsung menempatkan entri ke folder tsb.
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
-  const itemId = String(body.itemId || "").trim();
-  const shopId = String(body.shopId || "").trim();
-  const name = String(body.name || "").trim();
-  if (!itemId || !shopId || !name) {
-    return NextResponse.json(
-      { ok: false, error: "itemId, shopId, dan nama produk wajib diisi" },
-      { status: 400 }
-    );
+  const folderId = body.folderId ? String(body.folderId) : null;
+  if (folderId) {
+    const folder = await db.collectionFolder.findUnique({ where: { id: folderId } });
+    if (!folder) {
+      return NextResponse.json({ ok: false, error: "Folder tidak ditemukan" }, { status: 404 });
+    }
   }
 
-  const product = await db.product.upsert({
-    where: { itemId_shopId: { itemId, shopId } },
-    create: {
-      itemId,
-      shopId,
-      name,
-      imageUrl: String(body.imageUrl || ""),
-      price: Number(body.price) || 0,
-      commissionRate: Number(body.commissionRate) || 0,
-      source: "manual",
-    },
-    update: { name },
-  });
+  let product;
+  if (body.productId) {
+    product = await db.product.findUnique({ where: { id: String(body.productId) } });
+    if (!product) {
+      return NextResponse.json({ ok: false, error: "Produk tidak ditemukan" }, { status: 404 });
+    }
+  } else {
+    const itemId = String(body.itemId || "").trim();
+    const shopId = String(body.shopId || "").trim();
+    const name = String(body.name || "").trim();
+    if (!itemId || !shopId || !name) {
+      return NextResponse.json(
+        { ok: false, error: "itemId, shopId, dan nama produk wajib diisi" },
+        { status: 400 }
+      );
+    }
+
+    product = await db.product.upsert({
+      where: { itemId_shopId: { itemId, shopId } },
+      create: {
+        itemId,
+        shopId,
+        name,
+        imageUrl: String(body.imageUrl || ""),
+        price: Number(body.price) || 0,
+        commissionRate: Number(body.commissionRate) || 0,
+        source: "manual",
+      },
+      update: { name },
+    });
+  }
+
+  const existingEntry = await db.collectionEntry.findUnique({ where: { productId: product.id } });
+  if (existingEntry && !isSuperuser(user) && existingEntry.addedBy !== user.email) {
+    // Koleksi masih berupa katalog bersama. Admin boleh memakai produk yang
+    // sudah ada, tetapi tidak boleh mengubah tag/folder milik pengunggah lain.
+    return NextResponse.json({ ok: true, entry: existingEntry, shared: true });
+  }
 
   const entry = await db.collectionEntry.upsert({
     where: { productId: product.id },
     create: {
       productId: product.id,
       tags: String(body.tags || ""),
+      folderId,
       addedBy: user.email,
     },
-    update: { tags: String(body.tags || "") },
+    update: {
+      ...(body.tags !== undefined ? { tags: String(body.tags) } : {}),
+      ...("folderId" in body ? { folderId } : {}),
+    },
   });
 
   return NextResponse.json({ ok: true, entry });
@@ -142,16 +175,26 @@ export async function PATCH(req: Request) {
       }
     }
     const moved = await db.collectionEntry.updateMany({
-      where: { id: { in: body.ids.map(String) } },
+      where: {
+        id: { in: body.ids.map(String) },
+        ...(!isSuperuser(user) ? { addedBy: user.email } : {}),
+      },
       data: { folderId },
     });
     return NextResponse.json({ ok: true, moved: moved.count });
   }
 
-  const entry = await db.collectionEntry.update({
-    where: { id: String(body.id) },
+  const updated = await db.collectionEntry.updateMany({
+    where: {
+      id: String(body.id),
+      ...(!isSuperuser(user) ? { addedBy: user.email } : {}),
+    },
     data: { tags: String(body.tags ?? "") },
   });
+  if (updated.count === 0) {
+    return NextResponse.json({ ok: false, error: "Produk bukan milik Anda" }, { status: 403 });
+  }
+  const entry = await db.collectionEntry.findUnique({ where: { id: String(body.id) } });
   return NextResponse.json({ ok: true, entry });
 }
 
@@ -164,12 +207,41 @@ export async function DELETE(req: Request) {
   // disimpan (riwayat live aman); sisanya ikut terhapus. Hasil riset ulang
   // dari extension akan mengisi Koleksi lagi.
   if (body.all === true) {
+    if (!isSuperuser(user)) {
+      return NextResponse.json(
+        { ok: false, error: "Hanya superuser yang boleh mereset seluruh koleksi" },
+        { status: 403 }
+      );
+    }
     const removedEntries = await db.collectionEntry.deleteMany({});
     await db.product.deleteMany({ where: { sessionItems: { none: {} } } });
     return NextResponse.json({ ok: true, removed: removedEntries.count });
   }
 
+  // Reset per folder: hapus semua entri di folder tsb ("none" = tanpa folder).
+  // Folder-nya sendiri tidak dihapus. Pembersihan produk sama seperti reset
+  // penuh: produk yang tidak pernah dipakai sesi live ikut terhapus.
+  if (body.folderId) {
+    if (!isSuperuser(user)) {
+      return NextResponse.json(
+        { ok: false, error: "Hanya superuser yang boleh mereset satu folder" },
+        { status: 403 }
+      );
+    }
+    const folderId = String(body.folderId);
+    const removedEntries = await db.collectionEntry.deleteMany({
+      where: folderId === "none" ? { folderId: null } : { folderId },
+    });
+    await db.product.deleteMany({ where: { collection: null, sessionItems: { none: {} } } });
+    return NextResponse.json({ ok: true, removed: removedEntries.count });
+  }
+
   const ids: string[] = Array.isArray(body.ids) ? body.ids : [];
-  await db.collectionEntry.deleteMany({ where: { id: { in: ids } } });
+  await db.collectionEntry.deleteMany({
+    where: {
+      id: { in: ids },
+      ...(!isSuperuser(user) ? { addedBy: user.email } : {}),
+    },
+  });
   return NextResponse.json({ ok: true });
 }

@@ -11,7 +11,10 @@ type Studio = {
   hostCount: number;
   liveNow: number;
   pendingProducts: number;
+  owner: { id: string; name: string; email: string } | null;
 };
+
+type Account = { id: string; name: string; email: string; role: string };
 
 export default function LivePage() {
   const [studios, setStudios] = useState<Studio[]>([]);
@@ -20,7 +23,9 @@ export default function LivePage() {
   const [location, setLocation] = useState("");
   const [error, setError] = useState("");
   const [editStudio, setEditStudio] = useState<Studio | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", location: "" });
+  const [editForm, setEditForm] = useState({ name: "", location: "", ownerId: "" });
+  const [role, setRole] = useState("admin");
+  const [accounts, setAccounts] = useState<Account[]>([]);
 
   const load = useCallback(async () => {
     const r = await api<{ studios: Studio[] }>("/api/studios");
@@ -28,10 +33,21 @@ export default function LivePage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    (async () => {
+      const p = await api<{ user: { role: string } }>("/api/profile");
+      if (!p.ok) return;
+      setRole(p.user.role);
+      if (p.user.role === "superuser") {
+        const u = await api<{ users: Account[] }>("/api/users");
+        if (u.ok) setAccounts(u.users);
+      }
+    })();
+  }, []);
 
   function openEditStudio(s: Studio) {
     setEditStudio(s);
-    setEditForm({ name: s.name, location: s.location });
+    setEditForm({ name: s.name, location: s.location, ownerId: s.owner?.id ?? "" });
     setError("");
   }
 
@@ -39,7 +55,11 @@ export default function LivePage() {
     if (!editStudio || !editForm.name.trim()) return;
     const r = await api(`/api/studios/${editStudio.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ name: editForm.name.trim(), location: editForm.location }),
+      body: JSON.stringify({
+        name: editForm.name.trim(),
+        location: editForm.location,
+        ...(role === "superuser" && editForm.ownerId ? { ownerId: editForm.ownerId } : {}),
+      }),
     });
     if (r.ok) {
       setEditStudio(null);
@@ -95,6 +115,11 @@ export default function LivePage() {
               <div>
                 <div className="text-lg font-bold">{s.name}</div>
                 <div className="text-xs text-zinc-400">{s.location || "Tanpa lokasi"}</div>
+                {s.owner && (
+                  <div className="text-[11px] text-purple-300/80 mt-1">
+                    Pemilik: {s.owner.name}
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 {s.liveNow > 0 && (
@@ -149,6 +174,23 @@ export default function LivePage() {
                 <input value={editForm.location} onChange={(e) => setEditForm({ ...editForm, location: e.target.value })}
                   className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500" />
               </div>
+              {role === "superuser" && (
+                <div>
+                  <label className="text-xs text-zinc-400">Pemilik studio</label>
+                  <select value={editForm.ownerId}
+                    onChange={(e) => setEditForm({ ...editForm, ownerId: e.target.value })}
+                    className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-purple-500">
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.role})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-zinc-500 mt-1">
+                    Semua host di studio ini ikut dipindahkan ke pemilik baru.
+                  </p>
+                </div>
+              )}
               {error && <p className="text-red-400">{error}</p>}
             </div>
             <div className="flex gap-2 justify-end mt-5">

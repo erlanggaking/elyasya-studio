@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getTokenUser } from "@/lib/auth";
-import { pushPendingAssignments } from "@/lib/live-cart";
+import { pushPendingAssignments, carryOverCart } from "@/lib/live-cart";
+import { hostTenantWhere, sessionTenantWhere } from "@/lib/tenant";
 
 // Terima data sesi live yang di-capture extension dari live.shopee.co.id
 // (content-live.js). Disimpan sebagai LiveSession "eksternal" (tanpa host)
@@ -22,7 +23,9 @@ export async function POST(req: Request) {
     const shopeeSessionId = String(s.sessionId ?? s.session_id ?? "");
     if (!shopeeSessionId) continue;
 
-    let existing = await db.liveSession.findFirst({ where: { shopeeSessionId } });
+    let existing = await db.liveSession.findFirst({
+      where: { shopeeSessionId, ...sessionTenantWhere(auth.user) },
+    });
 
     // Sesi belum dikenal → auto-tautkan ke host: cocokkan uid (dari watcher
     // background) atau nama streamer (dari capture halaman live).
@@ -30,7 +33,10 @@ export async function POST(req: Request) {
       const uid = String(s.uid ?? "").trim();
       const streamer = String(s.streamer_name ?? s.streamerName ?? "").trim();
       const candidates = await db.host.findMany({
-        where: { OR: [{ liveUid: { not: "" } }, { liveUsername: { not: "" } }] },
+        where: {
+          ...hostTenantWhere(auth.user),
+          OR: [{ liveUid: { not: "" } }, { liveUsername: { not: "" } }],
+        },
         select: { id: true, name: true, studioId: true, liveUsername: true, liveUid: true },
       });
       const host =

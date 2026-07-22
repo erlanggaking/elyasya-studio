@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
-import { getActiveAccount } from "@/lib/shopee-account";
+import { getActiveAccount, withActiveAccount } from "@/lib/shopee-account";
 import { getSessionMetric, SHOPEE_MOCK } from "@/lib/shopee";
+import { isCookieAccount, enqueueLiveCommand } from "@/lib/live-commands";
+import { sessionTenantWhere } from "@/lib/tenant";
 
 // Polling metrik sesi live (PRD §11): proxy getSessionMetric + simpan snapshot.
-// Throttle: kalau snapshot terakhir < 20 detik lalu, balas dari DB (hemat rate limit).
+// Throttle ringan: panel polling 10 detik, snapshot < 8 detik cukup segar.
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -14,14 +16,14 @@ export async function GET(
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
-  const session = await db.liveSession.findUnique({
-    where: { id },
+  const session = await db.liveSession.findFirst({
+    where: { id, ...sessionTenantWhere(user) },
     include: { snapshots: { orderBy: { capturedAt: "desc" }, take: 1 } },
   });
   if (!session) return NextResponse.json({ ok: false, error: "Sesi tidak ditemukan" }, { status: 404 });
 
   const last = session.snapshots[0];
-  const fresh = last && Date.now() - last.capturedAt.getTime() < 20000;
+  const fresh = last && Date.now() - last.capturedAt.getTime() < 8000;
 
   if (session.status !== "live" || fresh) {
     return NextResponse.json({ ok: true, metrics: last ?? null, live: session.status === "live" });
@@ -34,16 +36,45 @@ export async function GET(
   // Sesi hasil "tautkan link live" tidak punya akun OAuth — di mode mock tetap
   // hasilkan metrik simulasi; di mode real balas snapshot terakhir saja.
   const account = await getActiveAccount(session.hostId);
+
+  // Host mode cookie: metrik diambil extension via cookie host. Titipkan perintah
+  // fetch_metrics (dikonsumsi extension), lalu balas snapshot terakhir yang sudah
+  // disetor extension. Panel auto-refresh akan menampilkan angka terbaru.
+  if (isCookieAccount(account)) {
+    // Hindari menumpuk: hanya titip 1 perintah fetch_metrics yang belum selesai.
+    const pendingFetch = await db.liveCommand.findFirst({
+      where: { liveSessionId: session.id, type: "fetch_metrics", status: { in: ["pending", "claimed"] } },
+    });
+    if (!pendingFetch) {
+      await enqueueLiveCommand({
+        hostId: session.hostId,
+        liveSessionId: session.id,
+        shopeeSessionId: session.shopeeSessionId,
+        type: "fetch_metrics",
+        payload: { session_id: session.shopeeSessionId },
+      });
+    }
+    return NextResponse.json({ ok: true, metrics: last ?? null, live: true, source: "cookie" });
+  }
+
   if (!account && !SHOPEE_MOCK) {
     return NextResponse.json({ ok: true, metrics: last ?? null, live: true, warning: "token" });
   }
 
   try {
-    const m = await getSessionMetric(
-      { accessToken: account?.accessToken ?? "", shopId: account?.shopId ?? "", userId: account?.userId ?? "" },
-      session.shopeeSessionId,
-      session.startedAt ?? undefined
-    );
+    const m = SHOPEE_MOCK
+      ? await getSessionMetric(
+          { accessToken: "", shopId: "", userId: "" },
+          session.shopeeSessionId,
+          session.startedAt ?? undefined
+        )
+      : await withActiveAccount(session.hostId, (active) =>
+          getSessionMetric(
+            { accessToken: active.accessToken, shopId: active.shopId, userId: active.userId },
+            session.shopeeSessionId,
+            session.startedAt ?? undefined
+          )
+        );
 
     // estimasi komisi = Σ (gmv proporsional × rata-rata rate item di cart)
     const items = await db.liveSessionItem.findMany({

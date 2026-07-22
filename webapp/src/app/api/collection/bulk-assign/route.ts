@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { pushPendingAssignments } from "@/lib/live-cart";
+import { hostTenantWhere, studioTenantWhere } from "@/lib/tenant";
 
 // Bulk action Koleksi → kirim ke studio dan/atau host (PRD §7.3).
 // Item tetap di Koleksi; hanya membuat Assignment (many-to-many).
@@ -18,6 +19,23 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { ok: false, error: "Pilih produk dan minimal satu studio/host tujuan" },
       { status: 400 }
+    );
+  }
+
+  const [allowedStudios, allowedHosts] = await Promise.all([
+    db.studio.findMany({
+      where: { id: { in: studioIds }, ...studioTenantWhere(user) },
+      select: { id: true },
+    }),
+    db.host.findMany({
+      where: { id: { in: hostIds }, ...hostTenantWhere(user) },
+      select: { id: true },
+    }),
+  ]);
+  if (allowedStudios.length !== new Set(studioIds).size || allowedHosts.length !== new Set(hostIds).size) {
+    return NextResponse.json(
+      { ok: false, error: "Ada studio/host yang tidak ditemukan atau bukan milik Anda" },
+      { status: 403 }
     );
   }
 

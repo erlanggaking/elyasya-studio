@@ -11,13 +11,17 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
-  name         String
-  createdAt    DateTime @default(now())
-  devices      Device[]
-  tokens       ApiToken[]
+  id                String             @id @default(cuid())
+  email             String             @unique
+  passwordHash      String
+  name              String
+  role              String             @default("admin") // admin | superuser
+  createdAt         DateTime           @default(now())
+  devices           Device[]
+  tokens            ApiToken[]
+  studios           Studio[]
+  hosts             Host[]
+  commissionReports CommissionReport[]
 }
 
 // Personal access token untuk extension (menu Extension → Generate Token)
@@ -51,10 +55,14 @@ model Studio {
   id           String        @id @default(cuid())
   name         String
   location     String        @default("")
+  ownerId      String?
+  owner        User?         @relation(fields: [ownerId], references: [id], onDelete: SetNull)
   createdAt    DateTime      @default(now())
   hosts        Host[]
   assignments  Assignment[]
   liveSessions LiveSession[]
+
+  @@index([ownerId])
 }
 
 model Host {
@@ -73,12 +81,17 @@ model Host {
   autoPinEnabled Boolean         @default(false)
   autoPinSeconds Int             @default(60)
   autoPinMode    String          @default("urut")
+  ownerId        String?
+  owner          User?           @relation(fields: [ownerId], references: [id], onDelete: SetNull)
   studioId       String?
   studio         Studio?         @relation(fields: [studioId], references: [id], onDelete: SetNull)
   createdAt      DateTime        @default(now())
   shopeeAccounts ShopeeAccount[]
   assignments    Assignment[]
   liveSessions   LiveSession[]
+  liveCommands   LiveCommand[]
+
+  @@index([ownerId])
 }
 
 model ShopeeAccount {
@@ -93,11 +106,55 @@ model ShopeeAccount {
   accessToken    String    @default("")
   refreshToken   String    @default("")
   tokenExpiresAt DateTime?
-  scope          String    @default("livestream") // livestream | affiliate
+  // livestream | affiliate = OAuth resmi (Partner API, pakai token).
+  // cookie = host login via Google/cookie di browser; kontrol keranjang & metrik
+  // dijalankan extension memakai cookie host (server tak pernah simpan cookie).
+  scope          String    @default("livestream") // livestream | affiliate | cookie
+  // Perangkat extension yang terakhir eksekusi perintah cookie (diagnostik).
+  connectorDeviceId String @default("")
   status         String    @default("active") // active | expired | revoked
   connectedAt    DateTime  @default(now())
 
   @@unique([hostId, shopId])
+}
+
+// Antrian perintah untuk extension mengeksekusi aksi live (add/remove/pin item,
+// fetch metrik) memakai cookie host di browser — dipakai saat host terhubung
+// mode "cookie" (login Google, tanpa OAuth Partner API). Server tidak pernah
+// menyentuh cookie; hanya menitipkan perintah & menerima hasil.
+model LiveCommand {
+  id              String    @id @default(cuid())
+  hostId          String
+  host            Host      @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  liveSessionId   String    @default("")
+  shopeeSessionId String    @default("")
+  // add_items | remove_item | pin_item | fetch_metrics
+  type            String
+  payload         String    @default("{}") // JSON: item_list / item / dsb.
+  status          String    @default("pending") // pending | claimed | done | failed
+  claimedByDevice String    @default("")
+  result          String    @default("{}") // JSON hasil / error dari extension
+  attempts        Int       @default(0)
+  createdAt       DateTime  @default(now())
+  claimedAt       DateTime?
+  finishedAt      DateTime?
+
+  @@index([status, hostId])
+}
+
+// Endpoint internal live Shopee yang "dipelajari" extension dari trafik live
+// yang tertangkap (add item, pin/show item, metrik real-time). Karena Shopee
+// tidak mendokumentasikannya, template ini dipakai extension untuk me-replay
+// perintah dari dashboard. Di-share lintas host (endpoint sama untuk semua).
+model ShopeeLiveEndpoint {
+  id           String   @id @default(cuid())
+  // add_item | remove_item | show_item | metrics
+  action       String   @unique
+  method       String   @default("POST")
+  urlTemplate  String   // mis. https://live.shopee.co.id/api/v1/session/{session_id}/item
+  bodyTemplate String   @default("") // JSON template dgn placeholder, "" = GET/query
+  sampleBody   String   @default("{}") // contoh payload asli (diagnostik)
+  learnedAt    DateTime @default(now())
 }
 
 model Product {
@@ -218,6 +275,8 @@ model MetricSnapshot {
 
 model CommissionReport {
   id               String   @id @default(cuid())
+  ownerId          String?
+  owner            User?    @relation(fields: [ownerId], references: [id], onDelete: SetNull)
   shopeeAccountId  String   @default("")
   orderId          String   @default("")
   productItemId    String   @default("")
@@ -225,6 +284,8 @@ model CommissionReport {
   status           String   @default("pending") // pending | approved | rejected
   period           String   @default("")
   syncedAt         DateTime @default(now())
+
+  @@index([ownerId])
 }
 
 // Keyword trending (dari capture extension) — untuk /api/research/trending

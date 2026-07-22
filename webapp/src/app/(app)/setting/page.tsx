@@ -14,17 +14,17 @@ type Host = {
   shopee: { id: string; shopId: string; shopName: string; status: string }[];
 };
 
-type Account = { id: string; name: string; email: string; createdAt: string };
+type Account = { id: string; name: string; email: string; role: "admin" | "superuser"; createdAt: string };
 
 export default function SettingPage() {
-  const [profile, setProfile] = useState({ name: "", email: "" });
+  const [profile, setProfile] = useState({ name: "", email: "", role: "admin" });
   const [pwd, setPwd] = useState({ currentPassword: "", newPassword: "" });
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selfId, setSelfId] = useState("");
   const [showNewAccount, setShowNewAccount] = useState(false);
-  const [newAccount, setNewAccount] = useState({ name: "", email: "", password: "" });
+  const [newAccount, setNewAccount] = useState({ name: "", email: "", password: "", role: "admin" });
   const [editAccount, setEditAccount] = useState<Account | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", email: "", password: "" });
+  const [editForm, setEditForm] = useState({ name: "", email: "", password: "", role: "admin" });
   const [hosts, setHosts] = useState<Host[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -38,8 +38,12 @@ export default function SettingPage() {
   const pageSize = 25;
 
   const loadProfile = useCallback(async () => {
-    const r = await api<{ user: { name: string; email: string } }>("/api/profile");
-    if (r.ok) setProfile({ name: r.user.name, email: r.user.email });
+    const r = await api<{ user: { name: string; email: string; role: string } }>("/api/profile");
+    if (r.ok) setProfile({
+      name: r.user.name,
+      email: r.user.email,
+      role: r.user.role === "superuser" ? "superuser" : "admin",
+    });
   }, []);
 
   const loadHosts = useCallback(async () => {
@@ -62,7 +66,9 @@ export default function SettingPage() {
 
   useEffect(() => { loadProfile(); }, [loadProfile]);
   useEffect(() => { loadHosts(); }, [loadHosts]);
-  useEffect(() => { loadAccounts(); }, [loadAccounts]);
+  useEffect(() => {
+    if (profile.role === "superuser") loadAccounts();
+  }, [loadAccounts, profile.role]);
 
   async function saveProfile() {
     const r = await api("/api/profile", {
@@ -83,14 +89,14 @@ export default function SettingPage() {
     if (r.ok) {
       setShowNewAccount(false);
       setMsg(`✅ Akun ${newAccount.email} dibuat — bisa langsung dipakai login`);
-      setNewAccount({ name: "", email: "", password: "" });
+      setNewAccount({ name: "", email: "", password: "", role: "admin" });
       loadAccounts();
     } else setMsg(`❌ ${r.error}`);
   }
 
   function openEditAccount(a: Account) {
     setEditAccount(a);
-    setEditForm({ name: a.name, email: a.email, password: "" });
+    setEditForm({ name: a.name, email: a.email, password: "", role: a.role });
   }
 
   async function saveEditAccount() {
@@ -101,6 +107,7 @@ export default function SettingPage() {
         id: editAccount.id,
         name: editForm.name,
         email: editForm.email,
+        role: editForm.role,
         ...(editForm.password ? { password: editForm.password } : {}),
       }),
     });
@@ -163,11 +170,119 @@ export default function SettingPage() {
   return (
     <div className="space-y-8 max-w-4xl">
       <div>
-        <h1 className="text-2xl font-bold">Setting</h1>
-        <p className="text-zinc-400 text-sm">Profil, host, dan preferensi</p>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-bold">Setting</h1>
+          <span className={`text-[10px] rounded px-2 py-0.5 ${
+            profile.role === "superuser"
+              ? "bg-purple-600/20 text-purple-300"
+              : "bg-zinc-700 text-zinc-300"
+          }`}>
+            {profile.role === "superuser" ? "SUPERUSER" : "ADMIN"}
+          </span>
+        </div>
+        <p className="text-zinc-400 text-sm">
+          {profile.role === "superuser"
+            ? "Akses semua studio, report, dan akun admin"
+            : "Akses terbatas ke studio dan report milik Anda"}
+        </p>
       </div>
 
       {msg && <p className="text-sm bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2">{msg}</p>}
+
+      {/* Panduan menghubungkan host */}
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-4">
+        <div>
+          <h2 className="font-semibold">Panduan: Menghubungkan Akun Shopee Host</h2>
+          <p className="text-zinc-400 text-sm mt-1">
+            Ada dua cara agar dashboard bisa mengelola keranjang/pin & menarik metrik live host.
+            Pilih salah satu sesuai cara host login ke Shopee.
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-3">
+          <div className="rounded-lg border border-orange-700/40 bg-orange-950/20 p-4 space-y-1">
+            <h3 className="text-sm font-semibold text-orange-300">Cara A — OAuth (resmi)</h3>
+            <p className="text-xs text-zinc-400">
+              Untuk host yang punya <b className="text-zinc-300">username/no. HP + password Shopee</b>.
+              Paling stabil. Dipakai lewat tombol <b className="text-zinc-300">Hubungkan Shopee</b> di panel host.
+            </p>
+          </div>
+          <div className="rounded-lg border border-sky-700/40 bg-sky-950/20 p-4 space-y-1">
+            <h3 className="text-sm font-semibold text-sky-300">Cara B — Cookie / Extension</h3>
+            <p className="text-xs text-zinc-400">
+              Untuk host yang daftar/masuk <b className="text-zinc-300">via Google</b> (tak punya password
+              Shopee). Tanpa OAuth — extension menjalankan aksi memakai cookie login host di browser.
+            </p>
+          </div>
+        </div>
+
+        <details className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4 group">
+          <summary className="cursor-pointer text-sm font-semibold text-zinc-200 select-none">
+            Cara A — Hubungkan via OAuth (host punya password Shopee)
+          </summary>
+          <ol className="mt-3 text-sm text-zinc-400 list-decimal ml-5 space-y-1.5">
+            <li>Buka menu <b className="text-zinc-300">Live</b> → pilih studio → pilih host.</li>
+            <li>Klik tombol <b className="text-zinc-300">Hubungkan Shopee</b>.</li>
+            <li>Di halaman resmi Shopee Open Platform, login pakai username/no. HP/email + password
+              akun Seller Shopee, lalu setujui otorisasi sampai browser kembali ke dashboard.</li>
+            <li>Status akun berubah jadi <span className="text-emerald-400">aktif</span> (label
+              <span className="text-orange-300"> OAuth</span>). Token otomatis di-refresh; tidak perlu login ulang.</li>
+          </ol>
+          <p className="mt-2 text-[11px] text-zinc-500">
+            Catatan: tombol Google tidak tersedia di halaman otorisasi Shopee ini. Jika host cuma punya
+            login Google, buat/reset password Shopee dulu, atau gunakan Cara B.
+          </p>
+        </details>
+
+        <details className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
+          <summary className="cursor-pointer text-sm font-semibold text-zinc-200 select-none">
+            Cara B — Hubungkan via Cookie/Extension (host login Google)
+          </summary>
+          <div className="mt-3 space-y-3 text-sm text-zinc-400">
+            <p>
+              Prinsipnya: <b className="text-zinc-300">dashboard yang memerintah, extension yang
+              mengeksekusi</b> memakai cookie login host di browser. Cookie tidak pernah dikirim/disimpan
+              di server.
+            </p>
+            <div>
+              <p className="font-medium text-zinc-300">Persiapan (sekali per host):</p>
+              <ol className="list-decimal ml-5 space-y-1.5 mt-1">
+                <li>Buka panel host (menu <b className="text-zinc-300">Live</b> → studio → host).</li>
+                <li>Di bagian <b className="text-zinc-300">Hubungkan via Cookie (Extension)</b>, isi
+                  <b className="text-zinc-300"> username live Shopee</b> host → Simpan Username
+                  (dipakai untuk mencocokkan akun otomatis).</li>
+                <li>Di browser tempat host login Shopee (boleh via Google), pasang extension
+                  Elyasya-Studio dan isi token (lihat menu <b className="text-zinc-300">Extension</b>).</li>
+                <li>Buka popup extension → bagian <b className="text-zinc-300">Kontrol Live via Cookie</b>
+                  → pilih host → klik <b className="text-zinc-300">Tautkan Akun Ini</b>.</li>
+                <li>Status akun host jadi <span className="text-emerald-400">aktif</span> dengan label
+                  <span className="text-sky-300"> cookie/extension</span>.</li>
+              </ol>
+            </div>
+            <div>
+              <p className="font-medium text-zinc-300">Mengajari tombol keranjang/pin (sekali saja):</p>
+              <p className="mt-1">
+                Cara Shopee menyimpan aksi pin/keranjang di live tidak terdokumentasi. Agar akurat,
+                cukup <b className="text-zinc-300">satu kali</b> host/operator pin atau tambah 1 produk
+                secara manual di halaman Shopee Live (dengan extension aktif). Extension merekam caranya,
+                lalu semua perintah pin/keranjang dari dashboard akan meniru cara yang sama.
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-zinc-300">Saat live:</p>
+              <p className="mt-1">
+                Klik Pin/Push/Hapus produk seperti biasa di panel host. Perintah diantre dan
+                dijalankan extension dalam beberapa detik. Metrik (GMV, order, penonton, likes)
+                ditarik extension memakai cookie dan tampil di panel dengan auto-refresh.
+              </p>
+            </div>
+            <p className="text-[11px] text-zinc-500">
+              Syarat: browser host tetap terbuka & login Shopee, extension terpasang + token benar,
+              dan &quot;Simpan&quot; sudah dilakukan di popup.
+            </p>
+          </div>
+        </details>
+      </section>
 
       {/* Profil */}
       <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-4">
@@ -207,7 +322,8 @@ export default function SettingPage() {
         </button>
       </section>
 
-      {/* Akun login dashboard */}
+      {/* Akun login dashboard — hanya superuser */}
+      {profile.role === "superuser" && (
       <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold">Akun Login Dashboard ({accounts.length})</h2>
@@ -223,7 +339,7 @@ export default function SettingPage() {
           <table className="w-full text-sm">
             <thead className="bg-zinc-950/60 text-zinc-400 text-xs">
               <tr>
-                {["Nama", "Email", "Dibuat", ""].map((h, i) => (
+                {["Nama", "Email", "Role", "Dibuat", ""].map((h, i) => (
                   <th key={i} className="text-left px-4 py-3 font-medium">{h}</th>
                 ))}
               </tr>
@@ -236,6 +352,15 @@ export default function SettingPage() {
                     {a.id === selfId && <span className="ml-2 text-[10px] font-bold bg-orange-600/30 text-orange-300 rounded px-1.5 py-0.5">Anda</span>}
                   </td>
                   <td className="px-4 py-3 text-zinc-400">{a.email}</td>
+                  <td className="px-4 py-3">
+                    <span className={`text-[10px] rounded px-1.5 py-0.5 ${
+                      a.role === "superuser"
+                        ? "bg-purple-600/20 text-purple-300"
+                        : "bg-zinc-700 text-zinc-300"
+                    }`}>
+                      {a.role}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-zinc-400">{new Date(a.createdAt).toLocaleDateString("id-ID")}</td>
                   <td className="px-4 py-3 text-right space-x-3">
                     <button onClick={() => openEditAccount(a)}
@@ -251,6 +376,7 @@ export default function SettingPage() {
           </table>
         </div>
       </section>
+      )}
 
       {/* Kelola Host */}
       <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-4">
@@ -347,6 +473,15 @@ export default function SettingPage() {
                 <input type="password" value={newAccount.password} onChange={(e) => setNewAccount({ ...newAccount, password: e.target.value })}
                   className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500" />
               </div>
+              <div>
+                <label className="text-xs text-zinc-400">Role</label>
+                <select value={newAccount.role}
+                  onChange={(e) => setNewAccount({ ...newAccount, role: e.target.value })}
+                  className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500">
+                  <option value="admin">Admin — hanya data miliknya</option>
+                  <option value="superuser">Superuser — semua data</option>
+                </select>
+              </div>
             </div>
             <div className="flex gap-2 justify-end mt-5">
               <button onClick={() => setShowNewAccount(false)} className="px-4 py-2 text-sm text-zinc-400">Batal</button>
@@ -408,6 +543,15 @@ export default function SettingPage() {
                 <label className="text-xs text-zinc-400">Password baru (min. 8 — kosongkan jika tidak diganti)</label>
                 <input type="password" value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
                   className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500" />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400">Role</label>
+                <select value={editForm.role}
+                  onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
+                  className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-orange-500">
+                  <option value="admin">Admin — hanya data miliknya</option>
+                  <option value="superuser">Superuser — semua data</option>
+                </select>
               </div>
             </div>
             <div className="flex gap-2 justify-end mt-5">

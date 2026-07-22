@@ -3,7 +3,8 @@ import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { tokenStatus } from "@/lib/shopee-account";
 import { resolveShareLink } from "@/lib/shopee-live";
-import { pushPendingAssignments } from "@/lib/live-cart";
+import { pushPendingAssignments, carryOverCart } from "@/lib/live-cart";
+import { canAccessHost, canAccessStudio, hostTenantWhere } from "@/lib/tenant";
 
 export async function GET(
   _req: Request,
@@ -13,8 +14,8 @@ export async function GET(
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
-  const host = await db.host.findUnique({
-    where: { id },
+  const host = await db.host.findFirst({
+    where: { id, ...hostTenantWhere(user) },
     include: {
       studio: true,
       shopeeAccounts: true,
@@ -43,8 +44,10 @@ export async function GET(
         id: a.id,
         shopId: a.shopId,
         shopName: a.shopName,
+        scope: a.scope,
         connectedAt: a.connectedAt,
-        status: tokenStatus(a),
+        // Akun cookie tak punya token → status ditentukan flag DB, bukan expiry.
+        status: a.scope === "cookie" ? a.status : tokenStatus(a),
       })),
     },
   });
@@ -57,7 +60,19 @@ export async function PATCH(
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
+  if (!(await canAccessHost(user, id))) {
+    return NextResponse.json({ ok: false, error: "Host tidak ditemukan" }, { status: 404 });
+  }
   const body = await req.json().catch(() => ({}));
+  if (body.studioId && !(await canAccessStudio(user, String(body.studioId)))) {
+    return NextResponse.json({ ok: false, error: "Studio tidak ditemukan" }, { status: 404 });
+  }
+  const targetStudio = body.studioId
+    ? await db.studio.findUnique({
+        where: { id: String(body.studioId) },
+        select: { ownerId: true },
+      })
+    : null;
 
   // Setup link live (sekali): resolve → simpan uid streamer, dan langsung
   // tautkan sesi yang ada di link (host baru saja share = sedang live).
@@ -78,7 +93,7 @@ export async function PATCH(
           where: { hostId: id, status: "live" },
         });
         if (!known && !activeOther && hostRow) {
-          await db.liveSession.create({
+          const created = await db.liveSession.create({
             data: {
               shopeeSessionId: r.sessionId,
               hostId: id,
@@ -90,6 +105,7 @@ export async function PATCH(
             },
           });
           autoLinked = true;
+          await carryOverCart(id, created.id);
           await pushPendingAssignments(id);
         }
       }
@@ -104,6 +120,7 @@ export async function PATCH(
       ...(body.contact !== undefined ? { contact: String(body.contact) } : {}),
       ...(body.liveUsername !== undefined ? { liveUsername: String(body.liveUsername).trim() } : {}),
       ...(body.studioId !== undefined ? { studioId: body.studioId || null } : {}),
+      ...(targetStudio?.ownerId ? { ownerId: targetStudio.ownerId } : {}),
       ...(body.autoPinEnabled !== undefined ? { autoPinEnabled: Boolean(body.autoPinEnabled) } : {}),
       ...(body.autoPinSeconds !== undefined
         ? { autoPinSeconds: Math.max(10, Math.min(3600, Number(body.autoPinSeconds) || 60)) }
@@ -124,6 +141,9 @@ export async function DELETE(
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
+  if (!(await canAccessHost(user, id))) {
+    return NextResponse.json({ ok: false, error: "Host tidak ditemukan" }, { status: 404 });
+  }
   await db.host.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }

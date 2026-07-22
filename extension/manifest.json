@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Elyasya-Studio",
-  "version": "6.6.0",
+  "version": "6.7.0",
   "description": "Riset produk & livestream Shopee — capture via DevTools Protocol, panel riset otomatis, akumulasi halaman, analitik & sync dashboard.",
   "icons": {
     "16": "icons/icon16.png",

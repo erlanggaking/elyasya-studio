@@ -3,6 +3,7 @@
  */
 
 import { DebuggerCapture } from "./debugger-capture.js";
+import { executeCommand } from "./live-control.js";
 
 const DEFAULT_API_URL = "https://elyasyastudio.com";
 const SYNC_ALARM = "elyasya-sync";
@@ -13,6 +14,7 @@ const CAPTURE_PREF_KEY = "debuggerCaptureEnabled";
 
 let syncInProgress = false;
 let syncDebounceTimer = null;
+let commandDrainTimer = null;
 
 // ---- Capture via chrome.debugger (DevTools Protocol) ------------------------
 // Body respons yang tertangkap diteruskan ke content script tab bersangkutan,
@@ -579,6 +581,124 @@ async function watchLiveSessions() {
   if (updates.length) await syncLiveSessions(updates);
 }
 
+// ---- Kontrol via cookie: identify akun + eksekusi perintah -------------------
+// Host login Shopee (mis. via Google) di browser ini → extension membaca
+// identitasnya dari cookie dan menautkannya ke host di dashboard, lalu
+// menjalankan perintah keranjang/metrik memakai cookie yang sama. Server tak
+// pernah menyentuh cookie.
+
+// Baca identitas akun Shopee yang sedang login (uid, username, shop) via cookie.
+async function getShopeeIdentity() {
+  const tryFetch = async (url) => {
+    try {
+      const res = await fetch(url, {
+        credentials: "include",
+        headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest", "X-API-SOURCE": "pc" },
+      });
+      if (!res.ok) return null;
+      return await res.json().catch(() => null);
+    } catch {
+      return null;
+    }
+  };
+
+  // Endpoint akun utama Shopee (butuh login). Bentuk respons bisa berbeda —
+  // ambil field tahan-bentuk.
+  const d =
+    (await tryFetch("https://shopee.co.id/api/v4/account/basic/get_account_info")) ||
+    (await tryFetch("https://seller.shopee.co.id/api/v4/account/basic/get_account_info"));
+  const data = d?.data ?? d ?? {};
+  const uid = String(data.userid ?? data.user_id ?? data.shopid ?? "").trim();
+  const username = String(data.username ?? data.user_name ?? "").trim();
+  const shopId = String(data.shopid ?? data.shop_id ?? "").trim();
+  if (!uid && !username) return null;
+  return { uid, username, shopId };
+}
+
+async function identifyLiveAccount(hostId) {
+  const config = await getConfig();
+  if (!config.token) return { ok: false, error: "Token belum diisi. Klik Simpan dulu." };
+
+  const identity = await getShopeeIdentity();
+  if (!identity) {
+    return { ok: false, error: "Belum terdeteksi login Shopee di browser ini. Buka & login shopee.co.id dulu." };
+  }
+
+  try {
+    const res = await fetch(`${config.apiUrl}/api/extension/live/identify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.token}` },
+      body: JSON.stringify({ ...identity, hostId: hostId || undefined, deviceId: await getDeviceId() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) return { ok: true, ...data, identity };
+    return { ok: false, error: data.error || `HTTP ${res.status}`, identity };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Network error", identity };
+  }
+}
+
+// Klaim perintah pending dari dashboard, eksekusi pakai cookie, lapor hasil.
+async function processLiveCommands() {
+  const config = await getConfig();
+  if (!config.token || !config.enabled) return;
+
+  const deviceId = await getDeviceId();
+  let commands = [];
+  let endpoints = [];
+  try {
+    const res = await fetch(
+      `${config.apiUrl}/api/extension/live/commands?device_id=${encodeURIComponent(deviceId)}`,
+      { headers: { Authorization: `Bearer ${config.token}` } }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!data.ok || !Array.isArray(data.commands)) return;
+    commands = data.commands;
+    endpoints = Array.isArray(data.endpoints) ? data.endpoints : [];
+  } catch {
+    return;
+  }
+  if (commands.length === 0) return;
+
+  const results = [];
+  for (const cmd of commands) {
+    const r = await executeCommand(cmd, endpoints);
+    results.push({ id: cmd.id, ok: r.ok, error: r.error, data: r.data });
+  }
+
+  try {
+    await fetch(`${config.apiUrl}/api/extension/live/commands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.token}` },
+      body: JSON.stringify({ results }),
+    });
+  } catch {
+    /* dilaporkan lagi di siklus berikutnya kalau gagal kirim */
+  }
+
+  // Ada perintah berarti host sedang aktif dikelola — kuras antrian lebih cepat
+  // daripada menunggu alarm 1 menit (alarm minimum Chrome).
+  clearTimeout(commandDrainTimer);
+  commandDrainTimer = setTimeout(() => processLiveCommands().catch(() => {}), 3500);
+}
+
+// Endpoint internal yang "dipelajari" dari trafik live asli (dari content-live)
+// → diteruskan ke server agar dipakai me-replay perintah.
+async function reportLearnedEndpoint(endpoint) {
+  const config = await getConfig();
+  if (!config.token || !endpoint) return { ok: false };
+  try {
+    await fetch(`${config.apiUrl}/api/extension/live/commands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.token}` },
+      body: JSON.stringify({ results: [], endpoints: [endpoint] }),
+    });
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
 // ---- Pencarian shopee.co.id dari background ---------------------------------
 // Dipakai research-core untuk melengkapi produk portal affiliate dengan data
 // penuh (rating, ulasan, ctime, stok, penjualan bulanan → tren). Background
@@ -677,6 +797,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.type === "LIVE_CAPTURE") {
     syncLiveSessions(msg.sessions)
+      .then(sendResponse)
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+
+  if (msg.type === "IDENTIFY_LIVE") {
+    identifyLiveAccount(msg.hostId)
+      .then(sendResponse)
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+
+  if (msg.type === "LIVE_LEARN_ENDPOINT") {
+    reportLearnedEndpoint(msg.endpoint)
       .then(sendResponse)
       .catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true;
@@ -784,7 +918,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === SYNC_ALARM) syncNow(false);
-  if (alarm.name === LIVE_WATCH_ALARM) watchLiveSessions();
+  if (alarm.name === LIVE_WATCH_ALARM) {
+    watchLiveSessions();
+    processLiveCommands();
+  }
 });
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -800,3 +937,4 @@ chrome.runtime.onStartup.addListener(() => {
 
 // Jalankan sekali tiap service worker bangun — jangan tunggu alarm pertama.
 watchLiveSessions().catch(() => {});
+processLiveCommands().catch(() => {});

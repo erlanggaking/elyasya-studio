@@ -116,9 +116,18 @@ export function findPlayUrl(node: unknown, depth = 0, seen = new Set<object>()):
  * Cek live yang sedang berjalan milik uid. Return session id (+ play url bila
  * ikut terbawa). Respons: { err_code: 0, data: { ongoing_live: null | {...} } }
  */
+// Konversi timestamp Shopee → Date. Endpoint live memakai MILIDETIK (13 digit),
+// endpoint partner memakai DETIK (10 digit) — tangani keduanya.
+export function shopeeTimestamp(value: unknown): Date | null {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const d = new Date(n < 10_000_000_000 ? n * 1000 : n);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export async function probeOngoing(
   uid: string
-): Promise<{ sessionId: string; title: string; playUrl: string } | null> {
+): Promise<{ sessionId: string; title: string; playUrl: string; startedAt: Date | null } | null> {
   if (!uid) return null;
   const d = await fetchJson(
     `https://live.shopee.co.id/api/v1/shop_page/live/ongoing?uid=${encodeURIComponent(uid)}`
@@ -145,9 +154,14 @@ export async function probeOngoing(
   const title = String(
     (live.title as string) ?? (live.name as string) ?? ""
   );
+  // Waktu mulai live ASLI (agar durasi di web = durasi di HP host).
+  const startedAt = shopeeTimestamp(
+    live.start_time ?? live.startTime ?? live.begin_time ?? live.ctime
+  );
   return {
     sessionId,
     title,
+    startedAt,
     playUrl: findPlayUrl(live) || (await getPublicPlayUrl(sessionId)),
   };
 }

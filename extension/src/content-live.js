@@ -217,7 +217,76 @@
     const d = event.data;
     if (!d || d.source !== SOURCE || d.type !== "fetch") return;
     ingest(d.body);
+    learnEndpoint(d.url, d.requestBody);
   });
+
+  // --- Pembelajaran endpoint kontrol keranjang -------------------------------
+  // Saat host/operator mengelola keranjang di halaman Shopee Live, request
+  // add/pin/remove item asli lewat sini. Rekam templatenya (URL + bentuk body)
+  // supaya dashboard bisa me-replay perintah lewat cookie. Endpoint internal
+  // Shopee tak terdokumentasi — ini bikin fitur tahan-perubahan.
+  const learned = new Set();
+
+  function classifyAction(url) {
+    const u = url.toLowerCase();
+    if (!/live\.shopee\.co\.id|shopee\.co\.id/.test(u)) return null;
+    if (/show[_-]?item|pin[_-]?item|highlight/.test(u)) return "show_item";
+    if (/(delete|remove).*item|item.*(delete|remove)/.test(u)) return "remove_item";
+    if (/add.*item|item.*add|(^|\/)items?(\/|\?|$)/.test(u)) return "add_item";
+    return null;
+  }
+
+  function templatize(str, sessionId) {
+    let out = String(str);
+    if (sessionId) out = out.split(sessionId).join("{session_id}");
+    return out;
+  }
+
+  function learnEndpoint(url, requestBody) {
+    try {
+      if (!url || typeof url !== "string") return;
+      const action = classifyAction(url);
+      if (!action) return;
+      // Hanya request tulis (punya body) yang berguna untuk replay.
+      if (action !== "add_item" && !requestBody) return;
+
+      const sid = sessionIdFromPage() || String(url.match(/(\d{6,})/)?.[1] || "");
+      const urlTemplate = templatize(url.split("?")[0], sid);
+
+      let bodyTemplate = "";
+      let sampleBody = requestBody ?? {};
+      if (requestBody && typeof requestBody === "object") {
+        let json = JSON.stringify(requestBody);
+        // Ganti nilai item_id/shop_id numerik dgn placeholder.
+        json = json
+          .replace(/("item_id"\s*:\s*)\d+/g, "$1{item_id}")
+          .replace(/("itemid"\s*:\s*)\d+/g, "$1{item_id}")
+          .replace(/("shop_id"\s*:\s*)\d+/g, "$1{shop_id}")
+          .replace(/("shopid"\s*:\s*)\d+/g, "$1{shop_id}");
+        if (sid) json = json.split(sid).join("{session_id}");
+        // Bila ada array item, jadikan {item_list} untuk add banyak sekaligus.
+        if (action === "add_item") {
+          json = json.replace(/\[[^[\]]*\{item_id\}[^[\]]*\]/, "{item_list}");
+        }
+        bodyTemplate = json;
+      }
+
+      const key = `${action}|${urlTemplate}`;
+      if (learned.has(key)) return;
+      learned.add(key);
+
+      const endpoint = {
+        action,
+        method: requestBody ? "POST" : "GET",
+        url_template: urlTemplate,
+        body_template: bodyTemplate,
+        sample_body: sampleBody,
+      };
+      chrome.runtime.sendMessage({ type: "LIVE_LEARN_ENDPOINT", endpoint }).catch(() => {});
+    } catch {
+      /* best-effort */
+    }
+  }
 
   // Nyalakan capture DevTools Protocol untuk tab live ini.
   try {

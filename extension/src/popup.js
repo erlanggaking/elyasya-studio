@@ -86,4 +86,66 @@ if (captureToggle) {
   });
 }
 
+// --- Kontrol Live via cookie: tautkan akun Shopee yang login ke host ---------
+const hostSelect = document.getElementById("hostSelect");
+const refreshHostsBtn = document.getElementById("refreshHostsBtn");
+const identifyBtn = document.getElementById("identifyBtn");
+
+async function loadHosts() {
+  const stored = await chrome.storage.sync.get(["apiUrl", "token"]);
+  const apiUrl = (stored.apiUrl || "https://elyasyastudio.com").replace(/\/$/, "");
+  const token = stored.token || "";
+  if (!token) {
+    setStatus("Isi token dulu untuk memuat host.", "err");
+    return;
+  }
+  try {
+    const res = await fetch(`${apiUrl}/api/extension/hosts`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      setStatus(data.error || "Gagal memuat host", "err");
+      return;
+    }
+    hostSelect.innerHTML = "";
+    const auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = "— Auto-cocokkan (uid/username) —";
+    hostSelect.appendChild(auto);
+    for (const h of data.hosts || []) {
+      const o = document.createElement("option");
+      o.value = h.id;
+      o.textContent = `${h.cookie_connected ? "● " : ""}${h.name}${h.studio ? ` · ${h.studio}` : ""}`;
+      hostSelect.appendChild(o);
+    }
+    setStatus(`${(data.hosts || []).length} host dimuat.`, "ok");
+  } catch {
+    setStatus("Tidak bisa menghubungi dashboard.", "err");
+  }
+}
+
+if (refreshHostsBtn) refreshHostsBtn.addEventListener("click", loadHosts);
+
+if (identifyBtn) {
+  identifyBtn.addEventListener("click", async () => {
+    setStatus("Membaca akun Shopee yang login…");
+    try {
+      const r = await chrome.runtime.sendMessage({
+        type: "IDENTIFY_LIVE",
+        hostId: hostSelect?.value || "",
+      });
+      if (r?.ok) {
+        setStatus(`Tertaut: ${r.host?.name || "host"} ← ${r.account?.shopName || "akun"}`, "ok");
+        loadHosts();
+      } else {
+        setStatus(r?.error || "Gagal menautkan", "err");
+      }
+    } catch {
+      setStatus("Reload extension lalu coba lagi.", "err");
+    }
+  });
+}
+
 loadConfig();
+loadHosts();

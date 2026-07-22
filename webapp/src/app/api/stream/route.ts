@@ -1,6 +1,7 @@
 import { getSessionUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getPublicPlayUrl } from "@/lib/shopee-live";
+import { sessionTenantWhere } from "@/lib/tenant";
 
 // Proxy stream FLV/HLS live Shopee → player panel. CDN Shopee tidak selalu
 // mengirim header CORS untuk origin kita, jadi dialirkan lewat server.
@@ -19,17 +20,20 @@ export async function GET(req: Request) {
   const params = new URL(req.url).searchParams;
   const localSessionId = params.get("session") || "";
   let raw = params.get("u") || "";
+  if (!localSessionId) {
+    return new Response("session wajib diisi", { status: 400 });
+  }
 
-  // Untuk fallback player, resolve ulang URL CDN agar signature yang sudah
-  // kedaluwarsa di browser/DB tidak ikut dipakai oleh proxy.
-  if (localSessionId) {
-    const session = await db.liveSession.findUnique({
-      where: { id: localSessionId },
-      select: { status: true, shopeeSessionId: true, playUrl: true },
-    });
-    if (!session || session.status !== "live") {
-      return new Response("Sesi live tidak ditemukan", { status: 404 });
-    }
+  // Setiap request (termasuk segmen HLS turunan) wajib terikat ke sesi yang
+  // boleh diakses user. Parameter u hanya dipakai setelah validasi ini.
+  const session = await db.liveSession.findFirst({
+    where: { id: localSessionId, ...sessionTenantWhere(user) },
+    select: { status: true, shopeeSessionId: true, playUrl: true },
+  });
+  if (!session || session.status !== "live") {
+    return new Response("Sesi live tidak ditemukan", { status: 404 });
+  }
+  if (!raw) {
     raw = session.shopeeSessionId
       ? await getPublicPlayUrl(session.shopeeSessionId)
       : session.playUrl;
@@ -71,7 +75,7 @@ export async function GET(req: Request) {
       .map((line) => {
         const value = line.trim();
         if (!value || value.startsWith("#")) return line;
-        return `/api/stream?u=${encodeURIComponent(new URL(value, target).toString())}`;
+        return `/api/stream?session=${encodeURIComponent(localSessionId)}&u=${encodeURIComponent(new URL(value, target).toString())}`;
       })
       .join("\n");
     return new Response(rewritten, {

@@ -1,10 +1,25 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
-import { getActiveAccount } from "@/lib/shopee-account";
+import { getActiveAccount, withActiveAccount } from "@/lib/shopee-account";
 import { getSessionDetail, SHOPEE_MOCK } from "@/lib/shopee";
 import { getPublicPlayUrl, getSessionLiveState, probeOngoing, uidFromShop } from "@/lib/shopee-live";
-import { pushPendingAssignments } from "@/lib/live-cart";
+import { pushPendingAssignments, carryOverCart } from "@/lib/live-cart";
+import { hostTenantWhere } from "@/lib/tenant";
+
+function dateFromShopee(value: unknown): Date | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+  const n = Number(value);
+  if (Number.isFinite(n) && n > 0) {
+    const d = new Date(n < 10_000_000_000 ? n * 1000 : n);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof value === "string") {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
 
 // Auto-deteksi live host (dipanggil panel saat load + polling):
 //  1. Pastikan liveUid host terisi (derive dari shop OAuth bila kosong).
@@ -18,7 +33,7 @@ export async function POST(
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
-  const host = await db.host.findUnique({ where: { id } });
+  const host = await db.host.findFirst({ where: { id, ...hostTenantWhere(user) } });
   if (!host) return NextResponse.json({ ok: false, error: "Host tidak ditemukan" }, { status: 404 });
 
   const account = await getActiveAccount(id);
@@ -48,6 +63,20 @@ export async function POST(
         data: { status: "ended", endedAt: new Date() },
       });
     } else {
+      // Samakan durasi web dengan durasi di HP host: pakai start_time ASLI dari
+      // endpoint publik "ongoing" (tersedia untuk semua host, tanpa OAuth).
+      if (
+        ongoing?.startedAt &&
+        (!active.startedAt ||
+          Math.abs(active.startedAt.getTime() - ongoing.startedAt.getTime()) > 5000)
+      ) {
+        const fixed = await db.liveSession.update({
+          where: { id: active.id },
+          data: { startedAt: ongoing.startedAt },
+        });
+        active.startedAt = fixed.startedAt;
+      }
+
       // Cek liveness via endpoint publik (terbuka untuk server, tanpa token):
       // "ended" = pasti berakhir → tutup sesi; "live" = segarkan play url.
       const liveState = await getSessionLiveState(active.shopeeSessionId);
@@ -67,11 +96,13 @@ export async function POST(
       }
       // Verifikasi via partner API: status asli + play_url untuk player panel.
       // (status get_session_detail: 1 = live, 2 = sudah berakhir)
-      if (liveState.state === "unknown" && !SHOPEE_MOCK && account?.userId) {
+      if (!SHOPEE_MOCK && account?.userId && account.scope !== "cookie") {
         try {
-          const detail = await getSessionDetail(
-            { accessToken: account.accessToken, shopId: account.shopId, userId: account.userId },
-            active.shopeeSessionId
+          const detail = await withActiveAccount(id, (fresh) =>
+            getSessionDetail(
+              { accessToken: fresh.accessToken, shopId: fresh.shopId, userId: fresh.userId },
+              active.shopeeSessionId
+            )
           );
           const status = String(detail?.status ?? "").toLowerCase();
           if (["2", "3", "ended", "end", "finished", "finish"].includes(status)) {
@@ -86,10 +117,20 @@ export async function POST(
           const playUrl = String(
             detail?.stream_url_list?.[0]?.play_url ?? detail?.stream_url_list?.play_url ?? ""
           );
-          if (playUrl && !active.playUrl) {
+          const actualStartedAt = dateFromShopee(
+            detail?.start_time ?? detail?.started_at ?? detail?.startTime
+          );
+          const shouldFixStart =
+            actualStartedAt &&
+            (!active.startedAt ||
+              Math.abs(active.startedAt.getTime() - actualStartedAt.getTime()) > 5000);
+          if ((playUrl && !active.playUrl) || shouldFixStart) {
             const updated = await db.liveSession.update({
               where: { id: active.id },
-              data: { playUrl },
+              data: {
+                ...(playUrl && !active.playUrl ? { playUrl } : {}),
+                ...(shouldFixStart && actualStartedAt ? { startedAt: actualStartedAt } : {}),
+              },
             });
             return NextResponse.json({ ok: true, live: true, session: updated });
           }
@@ -112,17 +153,23 @@ export async function POST(
     // Ambil play_url sekalian supaya player langsung tampil — prioritas dari
     // probe publik (valid untuk live aplikasi HP), partner API sebagai cadangan.
     let playUrl = ongoing.playUrl || (await getPublicPlayUrl(ongoing.sessionId));
-    if (!playUrl && !SHOPEE_MOCK && account?.userId) {
+    let actualStartedAt: Date | null = null;
+    if (!SHOPEE_MOCK && account?.userId && account.scope !== "cookie") {
       try {
-        const detail = await getSessionDetail(
-          { accessToken: account.accessToken, shopId: account.shopId, userId: account.userId },
-          ongoing.sessionId
+        const detail = await withActiveAccount(id, (fresh) =>
+          getSessionDetail(
+            { accessToken: fresh.accessToken, shopId: fresh.shopId, userId: fresh.userId },
+            ongoing.sessionId
+          )
         );
-        playUrl = String(
-          detail?.stream_url_list?.[0]?.play_url ?? detail?.stream_url_list?.play_url ?? ""
+        playUrl =
+          playUrl ||
+          String(detail?.stream_url_list?.[0]?.play_url ?? detail?.stream_url_list?.play_url ?? "");
+        actualStartedAt = dateFromShopee(
+          detail?.start_time ?? detail?.started_at ?? detail?.startTime
         );
       } catch (err) {
-        console.error("[live/refresh] detail playUrl", err);
+        console.error("[live/refresh] detail sesi", err);
       }
     }
 
@@ -137,12 +184,14 @@ export async function POST(
           title: ongoing.title || `Live ${host.name} — ${new Date().toLocaleDateString("id-ID")}`,
           shareUrl: `https://live.shopee.co.id/share?from=live&session=${ongoing.sessionId}`,
           playUrl,
-          startedAt: new Date(),
+          // Prioritas: start_time asli dari endpoint publik (durasi = HP host).
+          startedAt: ongoing.startedAt ?? actualStartedAt ?? new Date(),
         },
       }));
     if (!known) {
       console.log(`[live/refresh] auto-link session ${ongoing.sessionId} → ${host.name}`);
-      // Produk yang sudah di-assign langsung masuk keranjang live.
+      // Bawa produk dari sesi sebelumnya (di HP masih ada) + assign pending.
+      await carryOverCart(id, session.id);
       await pushPendingAssignments(id);
     }
     return NextResponse.json({ ok: true, live: true, session, autoLinked: !known });

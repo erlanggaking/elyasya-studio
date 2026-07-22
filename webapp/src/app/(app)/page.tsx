@@ -68,6 +68,58 @@ export default function DashboardPage() {
 
   const liveSessions = report?.sessions.filter((s) => s.status === "live") ?? [];
 
+  // ---- Tambah produk terlaris ke Koleksi ----------------------------------
+  // Klik "+ Koleksi" pada produk → modal pilih folder (atau tanpa folder /
+  // buat folder baru) → POST /api/collection { productId, folderId }.
+  type Folder = { id: string; name: string; count: number };
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [colProduct, setColProduct] = useState<{ productId: string; name: string } | null>(null);
+  const [colBusy, setColBusy] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [colMsg, setColMsg] = useState("");
+
+  async function openCollectModal(p: { productId: string; name: string }) {
+    setColProduct(p);
+    setNewFolderName("");
+    const r = await api<{ folders: Folder[] }>("/api/collection/folders");
+    if (r.ok) setFolders(r.folders);
+  }
+
+  async function addToCollection(folderId: string | null) {
+    if (!colProduct) return;
+    setColBusy(true);
+    const r = await api("/api/collection", {
+      method: "POST",
+      body: JSON.stringify({ productId: colProduct.productId, folderId }),
+    });
+    setColBusy(false);
+    if (r.ok) {
+      const target = folderId ? folders.find((f) => f.id === folderId)?.name : null;
+      setColMsg(`✅ "${colProduct.name.slice(0, 40)}" masuk Koleksi${target ? ` → 📁 ${target}` : ""}`);
+      setColProduct(null);
+      setTimeout(() => setColMsg(""), 4000);
+    } else {
+      alert(r.error || "Gagal menambahkan ke koleksi");
+    }
+  }
+
+  async function createFolderAndAdd() {
+    const name = newFolderName.trim();
+    if (!name) return;
+    setColBusy(true);
+    const r = await api<{ folder: { id: string } }>("/api/collection/folders", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    if (r.ok) {
+      setFolders((p) => [...p, { id: r.folder.id, name, count: 0 }]);
+      await addToCollection(r.folder.id);
+    } else {
+      setColBusy(false);
+      alert(r.error || "Gagal membuat folder");
+    }
+  }
+
   // ---- Kirim report ke WhatsApp -------------------------------------------
   // Dua mode: keseluruhan (isi dashboard) atau per studio (pilih studio mana
   // saja; datanya diambil ulang dari /api/report?studioId=… agar sama persis
@@ -296,9 +348,14 @@ export default function DashboardPage() {
                   <div className="text-emerald-400 font-semibold">{num(p.sold)} terjual</div>
                   <div className="text-zinc-400 text-[11px]">{rupiah(p.revenue)}</div>
                 </div>
+                <button onClick={() => openCollectModal(p)} title="Masukkan ke Koleksi"
+                  className="shrink-0 border border-zinc-700 hover:border-emerald-500 hover:bg-emerald-600/10 rounded-lg px-2 py-1.5 text-xs text-zinc-300">
+                  📁+
+                </button>
               </div>
             ))}
           </div>
+          {colMsg && <p className="text-emerald-400 text-sm mt-3">{colMsg}</p>}
         </section>
       )}
 
@@ -383,6 +440,46 @@ export default function DashboardPage() {
           GMV & komisi estimasi dari metrik sesi live (real-time). Komisi final dari laporan affiliate Shopee (delay approval).
         </p>
       </section>
+
+      {/* Modal masukkan produk ke Koleksi + pilih folder */}
+      {colProduct && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setColProduct(null)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-bold text-lg mb-1">📁 Masukkan ke Koleksi</h2>
+            <p className="text-zinc-400 text-sm mb-4 line-clamp-2">{colProduct.name}</p>
+
+            <div className="space-y-1.5 max-h-56 overflow-y-auto mb-3">
+              <button onClick={() => addToCollection(null)} disabled={colBusy}
+                className="w-full flex items-center gap-2 text-sm rounded-lg px-3 py-2 border border-zinc-700 hover:border-emerald-500 hover:bg-emerald-600/10 text-left disabled:opacity-40">
+                <span className="flex-1">Tanpa folder</span>
+                <span className="text-xs text-zinc-500">koleksi umum</span>
+              </button>
+              {folders.map((f) => (
+                <button key={f.id} onClick={() => addToCollection(f.id)} disabled={colBusy}
+                  className="w-full flex items-center gap-2 text-sm rounded-lg px-3 py-2 border border-zinc-700 hover:border-emerald-500 hover:bg-emerald-600/10 text-left disabled:opacity-40">
+                  <span className="flex-1">📁 {f.name}</span>
+                  <span className="text-xs text-zinc-500">{f.count} produk</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="flex gap-2">
+              <input value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && createFolderAndAdd()}
+                placeholder="Atau buat folder baru…"
+                className="flex-1 bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
+              <button onClick={createFolderAndAdd} disabled={colBusy || !newFolderName.trim()}
+                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap">
+                Buat & Masukkan
+              </button>
+            </div>
+
+            <div className="flex justify-end mt-4">
+              <button onClick={() => setColProduct(null)} className="px-4 py-2 text-sm text-zinc-400">Batal</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal pilih mode kirim WhatsApp */}
       {waModal && (

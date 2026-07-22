@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getTokenUser } from "@/lib/auth";
+import { hostTenantWhere, sessionTenantWhere } from "@/lib/tenant";
 
 // Kontrak watcher background extension (jalan tiap menit, tanpa buka tab):
 //  - sessions    : sesi live aktif → extension ambil play_url + viewer dari
@@ -16,12 +17,17 @@ export async function GET(req: Request) {
   }
 
   const sessions = await db.liveSession.findMany({
-    where: { status: "live", shopeeSessionId: { not: "" } },
+    where: {
+      status: "live",
+      shopeeSessionId: { not: "" },
+      ...sessionTenantWhere(auth.user),
+    },
     select: { shopeeSessionId: true },
     take: 10,
   });
   const hostsNoLive = await db.host.findMany({
     where: {
+      ...hostTenantWhere(auth.user),
       liveUid: { not: "" },
       liveSessions: { none: { status: "live" } },
     },

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { probeOngoing, resolveShareLink } from "@/lib/shopee-live";
+import { carryOverCart } from "@/lib/live-cart";
+import { hostTenantWhere } from "@/lib/tenant";
 
 // Tautkan sesi live dari link share host (PRD §7.4 alternatif tanpa OAuth):
 // host membagikan link live Shopee-nya → parse session id → jadi LiveSession
@@ -35,7 +37,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Link tidak valid — mulai dengan https://" }, { status: 400 });
   }
 
-  const host = await db.host.findUnique({ where: { id: hostId } });
+  const host = await db.host.findFirst({ where: { id: hostId, ...hostTenantWhere(user) } });
   if (!host) return NextResponse.json({ ok: false, error: "Host tidak ditemukan" }, { status: 404 });
 
   const directPlayUrl = /\.(?:flv|m3u8)(?:\?|$)/i.test(rawUrl) ? rawUrl : "";
@@ -93,6 +95,7 @@ export async function POST(req: Request) {
       startedAt: new Date(),
     },
   });
+  await carryOverCart(hostId, session.id);
   console.log(`[audit] ${user.email} linked video-only session host=${host.name}`);
   return NextResponse.json({ ok: true, session });
 }

@@ -17,7 +17,7 @@ type HostDetail = {
   autoPinSeconds: number;
   autoPinMode: string;
   studio: { id: string; name: string } | null;
-  shopeeAccounts: { id: string; shopId: string; shopName: string; status: string; connectedAt: string }[];
+  shopeeAccounts: { id: string; shopId: string; shopName: string; scope: string; status: string; connectedAt: string }[];
   assignments: {
     id: string;
     collectionEntry: { product: { name: string; imageUrl: string; price: number; commissionRate: number } };
@@ -51,6 +51,15 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
   const [busy, setBusy] = useState(false);
   const [liveLink, setLiveLink] = useState("");
   const [shareLink, setShareLink] = useState("");
+  const [liveUsername, setLiveUsername] = useState("");
+  const [authUrl, setAuthUrl] = useState("");
+  const [cookieStatus, setCookieStatus] = useState<{
+    cookieConnected: boolean;
+    shopName: string;
+    controlReady: boolean;
+    endpointsLearned: { add_item: boolean; show_item: boolean; remove_item: boolean; metrics: boolean };
+    recentCommands: { type: string; status: string; error: string; at: string }[];
+  } | null>(null);
   const [playerKey, setPlayerKey] = useState(0);
   const [connectBusy, setConnectBusy] = useState(false);
   const [autoPin, setAutoPin] = useState({ enabled: false, seconds: 60, mode: "urut" });
@@ -60,6 +69,7 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
     if (r.ok) {
       setHost(r.host);
       setShareLink(r.host.liveShareLink || "");
+      setLiveUsername(r.host.liveUsername || "");
       setAutoPin({
         enabled: r.host.autoPinEnabled,
         seconds: r.host.autoPinSeconds || 60,
@@ -85,6 +95,18 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
   }
 
   useEffect(() => { load(); }, [load]);
+
+  // Poll status kontrol cookie (siap/belum) tiap 8 detik
+  useEffect(() => {
+    let stop = false;
+    async function poll() {
+      const r = await api<typeof cookieStatus & { ok: boolean }>(`/api/hosts/${hostId}/live/cookie-status`);
+      if (!stop && r.ok) setCookieStatus(r);
+    }
+    poll();
+    const t = setInterval(poll, 8000);
+    return () => { stop = true; clearInterval(t); };
+  }, [hostId]);
 
   useEffect(() => {
     const cleanUrl = new URL(window.location.href);
@@ -131,13 +153,17 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
     if (!host) return;
     let stop = false;
     async function refresh() {
-      const r = await api<{ live: boolean; autoLinked?: boolean; ended?: boolean; session?: { playUrl?: string } }>(
+      const r = await api<{ live: boolean; autoLinked?: boolean; ended?: boolean; session?: { playUrl?: string; startedAt?: string } }>(
         `/api/hosts/${hostId}/live/refresh`, { method: "POST" });
       if (stop || !r.ok) return;
       if (r.autoLinked) { setMsg("🔴 Live host terdeteksi — sesi tertaut otomatis"); load(); }
       else if (r.ended) { setMsg("Live host sudah berakhir — sesi ditutup"); setMetrics(null); load(); }
-      // Stream video tersedia → muat ulang supaya player berganti ke video.
-      else if (r.session?.playUrl && r.session.playUrl !== activeSession?.playUrl) load();
+      // Stream video tersedia, atau waktu mulai dikoreksi (durasi = HP host) →
+      // muat ulang supaya player & jam durasi ikut terbarui.
+      else if (
+        (r.session?.playUrl && r.session.playUrl !== activeSession?.playUrl) ||
+        (r.session?.startedAt && r.session.startedAt !== activeSession?.startedAt)
+      ) load();
     }
     refresh();
     const t = setInterval(refresh, activeSession ? 60000 : 20000);
@@ -154,21 +180,38 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
       if (!stop && r.ok && r.metrics) setMetrics(r.metrics);
     }
     poll();
-    const t = setInterval(poll, 30000);
+    const t = setInterval(poll, 10000);
     return () => { stop = true; clearInterval(t); };
   }, [activeSession]);
 
+  // Live Shopee hanya dari HP → host otorisasi SEKALI dari HP-nya sendiri
+  // (tempat dia sudah login Shopee, termasuk via Google). Admin tinggal kirim
+  // link ini ke host. Setelah approve, server kontrol live via Partner API.
   async function connectShopee() {
     setConnectBusy(true);
     setMsg("");
     const r = await api<{ authorizeUrl: string }>(`/api/hosts/${hostId}/shopee/connect`, { method: "POST" });
-    if (!r.ok) {
-      setConnectBusy(false);
-      setMsg(`❌ ${r.error}`);
-      return;
-    }
-    // Halaman Open Platform Shopee menangani login dan persetujuan OAuth.
-    window.location.assign(r.authorizeUrl);
+    setConnectBusy(false);
+    if (!r.ok) { setMsg(`❌ ${r.error}`); return; }
+    setAuthUrl(r.authorizeUrl);
+  }
+
+  function sendAuthToWhatsApp() {
+    if (!authUrl) return;
+    const text =
+      `Halo ${host?.name ?? ""}, tolong hubungkan akun Shopee kamu ke Elyasya Studio (cukup sekali):\n\n` +
+      `1. Buka link di HP kamu: ${authUrl}\n` +
+      `2. Ganti negara jadi *Indonesia* (dropdown atas)\n` +
+      `3. Login pakai akun Shopee kamu.\n` +
+      `   • Kalau kamu daftar lewat *Google* dan tidak punya password: tap *Forgot?* → set password baru lewat email Google kamu, lalu login.\n` +
+      `4. Tap *Confirm Authorization*. Selesai 🙌`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+  }
+
+  async function copyAuth() {
+    if (!authUrl) return;
+    try { await navigator.clipboard.writeText(authUrl); setMsg("✅ Link otorisasi disalin — kirim ke HP host"); }
+    catch { setMsg("Salin manual link di bawah."); }
   }
 
   async function saveShareLink() {
@@ -182,6 +225,15 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
         : "✅ Link tersimpan — live berikutnya akan terdeteksi otomatis");
       load();
     } else setMsg(`❌ ${r.error}`);
+  }
+
+  async function saveLiveUsername() {
+    const r = await api(`/api/hosts/${hostId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ liveUsername: liveUsername.trim() }),
+    });
+    if (r.ok) { setMsg("✅ Username live host tersimpan — extension bisa auto-cocokkan akun"); load(); }
+    else setMsg(`❌ ${r.error}`);
   }
 
   async function linkLive() {
@@ -246,6 +298,7 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
   if (!host) return <div className="text-zinc-500">Memuat…</div>;
 
   const connected = host.shopeeAccounts.some((a) => a.status === "active");
+  const cookieConnected = host.shopeeAccounts.some((a) => a.scope === "cookie" && a.status === "active");
 
   return (
     <div className="space-y-6">
@@ -294,6 +347,9 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
                       a.status === "expiring" ? "text-amber-400" : "text-red-400"
                     }>●</span>
                     <span>{a.shopName || `Shop ${a.shopId}`}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${a.scope === "cookie" ? "bg-sky-600/20 text-sky-300" : "bg-orange-600/20 text-orange-300"}`}>
+                      {a.scope === "cookie" ? "cookie/extension" : "OAuth"}
+                    </span>
                     <span className="text-xs text-zinc-500">
                       ({a.status === "active" ? "aktif" : a.status === "expiring" ? "hampir expired" : "expired — reconnect"})
                     </span>
@@ -304,9 +360,37 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
           </div>
           <button onClick={connectShopee} disabled={connectBusy}
             className="bg-orange-600 hover:bg-orange-500 disabled:cursor-wait disabled:opacity-60 rounded-lg px-4 py-2 text-sm font-semibold">
-            {connectBusy ? "Membuka Shopee…" : connected ? "Hubungkan ulang" : "Hubungkan Shopee"}
+            {connectBusy ? "Menyiapkan…" : connected ? "Hubungkan ulang" : "Hubungkan Shopee"}
           </button>
         </div>
+
+        {/* Link otorisasi — host buka di HP-nya (live Shopee hanya dari HP) */}
+        {authUrl && (
+          <div className="rounded-lg border border-orange-600/40 bg-orange-950/20 p-4 space-y-3">
+            <p className="text-sm font-semibold">📱 Link otorisasi siap — host buka di HP-nya</p>
+            <p className="text-[12px] text-zinc-400">
+              Karena live Shopee hanya dari HP, host cukup otorisasi <b>sekali</b> dari HP miliknya
+              (login Shopee spt biasa — boleh via Google — lalu <b>Confirm Authorization</b>). Setelah itu
+              dashboard bisa pin/atur keranjang & tarik metrik dari jarak jauh.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={sendAuthToWhatsApp}
+                className="bg-emerald-600 hover:bg-emerald-500 rounded-lg px-3 py-2 text-sm font-semibold">
+                💬 Kirim link ke WhatsApp host
+              </button>
+              <button onClick={copyAuth}
+                className="bg-zinc-700 hover:bg-zinc-600 rounded-lg px-3 py-2 text-sm font-medium">
+                📋 Salin link
+              </button>
+              <button onClick={() => window.location.assign(authUrl)}
+                className="bg-zinc-800 hover:bg-zinc-700 rounded-lg px-3 py-2 text-sm font-medium">
+                Buka di perangkat ini
+              </button>
+              <button onClick={() => setAuthUrl("")} className="px-3 py-2 text-sm text-zinc-500">Tutup</button>
+            </div>
+            <div className="text-[11px] text-zinc-500 break-all bg-zinc-900/60 rounded px-2 py-1.5">{authUrl}</div>
+          </div>
+        )}
 
         <div className="border-t border-zinc-800 pt-4">
           <label className="text-xs text-zinc-400">
@@ -328,9 +412,67 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
           </p>
         </div>
 
+        {/* Alternatif tanpa password: hubungkan via cookie (extension) */}
+        <div className="border-t border-zinc-800 pt-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold">Hubungkan via Cookie (Extension)</h3>
+            {cookieConnected && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-600/20 text-sky-300">terhubung</span>
+            )}
+          </div>
+          <p className="text-[11px] text-amber-400/80">
+            ⚠ Jalur cookie hanya untuk host yang mengelola live dari <b>browser desktop</b>.
+            Kalau host live dari <b>HP</b> (umumnya begitu), pakai <b>Hubungkan Shopee</b> di atas —
+            host cukup otorisasi sekali dari HP-nya (boleh login via Google).
+          </p>
+          <ol className="text-[11px] text-zinc-400 list-decimal ml-4 space-y-0.5">
+            <li>Isi <b className="text-zinc-300">username live Shopee</b> host di bawah (untuk pencocokan otomatis).</li>
+            <li>Di browser host, login Shopee (boleh via Google) + pasang extension Elyasya.</li>
+            <li>Buka popup extension → pilih host ini → <b className="text-zinc-300">Tautkan Akun Ini</b>.</li>
+          </ol>
+          <div className="flex gap-2">
+            <input value={liveUsername} onChange={(e) => setLiveUsername(e.target.value)}
+              placeholder="username live Shopee host (mis. tokoku.id)"
+              className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-sky-500" />
+            <button onClick={saveLiveUsername}
+              className="bg-sky-600 hover:bg-sky-500 rounded-lg px-4 py-2 text-sm font-semibold whitespace-nowrap">
+              Simpan Username
+            </button>
+          </div>
+
+          {/* Diagnostik kesiapan kontrol cookie (pin/keranjang) */}
+          {cookieStatus && cookieStatus.cookieConnected && (
+            <div className="rounded-lg bg-zinc-800/60 border border-zinc-700 px-3 py-2 text-[11px] space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className={cookieStatus.controlReady ? "text-emerald-400" : "text-amber-400"}>
+                  {cookieStatus.controlReady ? "✓ Kontrol pin/keranjang SIAP" : "⚠ Menunggu extension mempelajari endpoint"}
+                </span>
+                <span className="text-zinc-500">akun {cookieStatus.shopName}</span>
+              </div>
+              <div className="flex gap-3 text-zinc-400">
+                {(["add_item", "show_item", "remove_item", "metrics"] as const).map((k) => (
+                  <span key={k} className={cookieStatus.endpointsLearned[k] ? "text-emerald-400" : "text-zinc-600"}>
+                    {cookieStatus.endpointsLearned[k] ? "●" : "○"} {k === "show_item" ? "pin" : k === "add_item" ? "tambah" : k === "remove_item" ? "hapus" : "metrik"}
+                  </span>
+                ))}
+              </div>
+              {!cookieStatus.controlReady && (
+                <p className="text-zinc-500">
+                  Minta host <b className="text-zinc-300">menambah/pin 1 produk manual sekali</b> dari halaman Shopee Live di
+                  browsernya (yang ada extension) — endpoint otomatis terekam, lalu kontrol dari dashboard aktif.
+                </p>
+              )}
+              {cookieStatus.recentCommands.some((c) => c.error) && (
+                <p className="text-red-400">
+                  Perintah terakhir gagal: {cookieStatus.recentCommands.find((c) => c.error)?.error}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 text-[11px] text-zinc-400 space-y-1">
-          <p>Login dilakukan di halaman resmi Shopee Open Platform menggunakan username/no. HP/email dan password akun Seller Shopee.</p>
-          <p>Tombol Google tidak tersedia pada halaman otorisasi ini. Jika akun biasa masuk lewat Google, buat/reset password Shopee terlebih dahulu; pilih <b className="text-zinc-300">Switch to Main account</b> bila halaman Shopee memintanya.</p>
+          <p><b className="text-zinc-300">OAuth (tombol di atas):</b> login di halaman resmi Shopee Open Platform pakai username/no. HP/email + password Seller. Tombol Google tak tersedia di halaman itu — jika host masuk via Google, buat/reset password Shopee dulu, atau pakai jalur cookie di atas.</p>
         </div>
       </section>
 
@@ -509,7 +651,7 @@ export default function HostPanelPage({ params }: { params: Promise<{ hostId: st
                 </div>
               ))}
             </div>
-            <p className="text-[11px] text-zinc-500">Metrik auto-refresh tiap 30 detik.</p>
+            <p className="text-[11px] text-zinc-500">Metrik auto-refresh tiap 10 detik.</p>
           </>
         )}
       </section>

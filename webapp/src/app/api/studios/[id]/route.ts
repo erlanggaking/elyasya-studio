@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
+import {
+  canAccessStudio,
+  hostTenantWhere,
+  isSuperuser,
+  sessionTenantWhere,
+  studioTenantWhere,
+} from "@/lib/tenant";
 
 export async function GET(
   _req: Request,
@@ -10,14 +17,15 @@ export async function GET(
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
-  const studio = await db.studio.findUnique({
-    where: { id },
+  const studio = await db.studio.findFirst({
+    where: { id, ...studioTenantWhere(user) },
     include: {
       hosts: {
+        where: hostTenantWhere(user),
         orderBy: { name: "asc" },
         include: {
           shopeeAccounts: { select: { id: true, status: true, tokenExpiresAt: true, shopId: true } },
-          liveSessions: { where: { status: "live" }, select: { id: true } },
+          liveSessions: { where: { status: "live" }, select: { id: true, startedAt: true } },
         },
       },
       assignments: {
@@ -26,6 +34,7 @@ export async function GET(
         orderBy: { assignedAt: "desc" },
       },
       liveSessions: {
+        where: sessionTenantWhere(user),
         orderBy: { createdAt: "desc" },
         take: 50,
         include: {
@@ -40,7 +49,10 @@ export async function GET(
   // Produk paling banyak terjual di studio ini (agregat semua sesi live-nya)
   const soldGroups = await db.liveSessionItem.groupBy({
     by: ["productId"],
-    where: { soldItems: { gt: 0 }, liveSession: { studioId: id } },
+    where: {
+      soldItems: { gt: 0 },
+      liveSession: { studioId: id, ...sessionTenantWhere(user) },
+    },
     _sum: { soldItems: true },
     orderBy: { _sum: { soldItems: "desc" } },
     take: 5,
@@ -71,13 +83,31 @@ export async function PATCH(
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
+  if (!(await canAccessStudio(user, id))) {
+    return NextResponse.json({ ok: false, error: "Studio tidak ditemukan" }, { status: 404 });
+  }
   const body = await req.json().catch(() => ({}));
-  const studio = await db.studio.update({
-    where: { id },
-    data: {
-      ...(body.name ? { name: String(body.name) } : {}),
-      ...(body.location !== undefined ? { location: String(body.location) } : {}),
-    },
+  const newOwnerId = isSuperuser(user) && body.ownerId ? String(body.ownerId) : "";
+  if (newOwnerId) {
+    const owner = await db.user.findUnique({ where: { id: newOwnerId }, select: { id: true } });
+    if (!owner) {
+      return NextResponse.json({ ok: false, error: "Pemilik baru tidak ditemukan" }, { status: 404 });
+    }
+  }
+  const studio = await db.$transaction(async (tx) => {
+    const updated = await tx.studio.update({
+      where: { id },
+      data: {
+        ...(body.name ? { name: String(body.name) } : {}),
+        ...(body.location !== undefined ? { location: String(body.location) } : {}),
+        ...(newOwnerId ? { ownerId: newOwnerId } : {}),
+      },
+    });
+    // Kepemilikan host mengikuti studio agar tidak ada data silang antar-admin.
+    if (newOwnerId) {
+      await tx.host.updateMany({ where: { studioId: id }, data: { ownerId: newOwnerId } });
+    }
+    return updated;
   });
   return NextResponse.json({ ok: true, studio });
 }
@@ -89,6 +119,9 @@ export async function DELETE(
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
+  if (!(await canAccessStudio(user, id))) {
+    return NextResponse.json({ ok: false, error: "Studio tidak ditemukan" }, { status: 404 });
+  }
   await db.studio.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }

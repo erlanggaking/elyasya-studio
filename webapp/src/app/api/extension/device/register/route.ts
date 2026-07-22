@@ -16,6 +16,12 @@ export async function POST(req: Request) {
   }
 
   const existing = await db.device.findUnique({ where: { deviceId } });
+  if (existing && existing.userId !== auth.user.id) {
+    return NextResponse.json(
+      { ok: false, error: "Device ini sudah terdaftar pada akun lain" },
+      { status: 403 }
+    );
+  }
   if (!existing) {
     const count = await db.device.count({ where: { userId: auth.user.id } });
     if (count >= MAX_DEVICES) {

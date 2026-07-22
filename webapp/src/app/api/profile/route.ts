@@ -8,7 +8,7 @@ export async function GET() {
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   return NextResponse.json({
     ok: true,
-    user: { id: user.id, email: user.email, name: user.name },
+    user: { id: user.id, email: user.email, name: user.name, role: user.role },
   });
 }
 
@@ -31,5 +31,5 @@ export async function PATCH(req: Request) {
     data.passwordHash = await bcrypt.hash(String(body.newPassword), 10);
   }
   const updated = await db.user.update({ where: { id: user.id }, data });
-  return NextResponse.json({ ok: true, user: { id: updated.id, email: updated.email, name: updated.name } });
+  return NextResponse.json({ ok: true, user: { id: updated.id, email: updated.email, name: updated.name, role: updated.role } });
 }

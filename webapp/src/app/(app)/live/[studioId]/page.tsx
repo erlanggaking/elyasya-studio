@@ -13,7 +13,7 @@ type StudioDetail = {
     name: string;
     note: string;
     shopeeAccounts: { id: string; status: string }[];
-    liveSessions: { id: string }[];
+    liveSessions: { id: string; startedAt: string | null }[];
   }[];
   assignments: {
     id: string;
@@ -52,6 +52,24 @@ export default function StudioDetailPage({ params }: { params: Promise<{ studioI
   }, [studioId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Jam durasi live berjalan di kartu host (tick tiap detik selama ada yang live,
+  // format sama dengan panel host: HH:MM:SS)
+  const anyLive = studio?.hosts.some((h) => h.liveSessions.length > 0) ?? false;
+  const [nowTs, setNowTs] = useState(Date.now());
+  useEffect(() => {
+    if (!anyLive) return;
+    const t = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [anyLive]);
+  function liveClock(startedAt: string | null) {
+    if (!startedAt) return "";
+    const s = Math.max(0, Math.floor((nowTs - new Date(startedAt).getTime()) / 1000));
+    const h = String(Math.floor(s / 3600)).padStart(2, "0");
+    const m = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+    const d = String(s % 60).padStart(2, "0");
+    return `${h}:${m}:${d}`;
+  }
 
   async function openAddHost() {
     const r = await api<{ hosts: typeof allHosts }>(`/api/hosts?pageSize=100${hostSearch ? `&q=${hostSearch}` : ""}`);
@@ -163,7 +181,14 @@ export default function StudioDetailPage({ params }: { params: Promise<{ studioI
                       <button onClick={() => renameHost(h)} title="Ganti nama host"
                         className="text-zinc-600 hover:text-orange-400 text-xs">✎</button>
                     </span>
-                    {isLive && <span className="text-[10px] font-bold bg-red-600 rounded px-1.5 py-0.5">LIVE</span>}
+                    {isLive && (
+                      <span className="flex items-center gap-1.5">
+                        {h.liveSessions[0]?.startedAt && (
+                          <span className="text-[11px] font-mono text-red-300">{liveClock(h.liveSessions[0].startedAt)}</span>
+                        )}
+                        <span className="text-[10px] font-bold bg-red-600 rounded px-1.5 py-0.5">LIVE</span>
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs mt-1">
                     {connected

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
+import { isSuperuser, sessionTenantWhere } from "@/lib/tenant";
 
 // Agregasi report (PRD §7.2): per sesi → per host → per studio, filter tanggal.
 // GMV/komisi diambil dari snapshot TERAKHIR tiap sesi (metrik Shopee kumulatif).
@@ -16,6 +17,7 @@ export async function GET(req: Request) {
 
   const sessions = await db.liveSession.findMany({
     where: {
+      ...sessionTenantWhere(user),
       ...(studioId ? { studioId } : {}),
       ...(hostId ? { hostId } : {}),
       ...(from || to
@@ -82,7 +84,10 @@ export async function GET(req: Request) {
 
   // Komisi final approved (Affiliate API — PRD §9.2; kosong sampai integrasi aktif)
   const finalCommission = await db.commissionReport.aggregate({
-    where: { status: "approved" },
+    where: {
+      status: "approved",
+      ...(!isSuperuser(user) ? { ownerId: user.id } : {}),
+    },
     _sum: { commissionAmount: true },
   });
 

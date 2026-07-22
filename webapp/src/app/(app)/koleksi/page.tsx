@@ -47,6 +47,7 @@ export default function KoleksiPage() {
   const [folderName, setFolderName] = useState("");
   const [showMove, setShowMove] = useState(false);
   const [showReset, setShowReset] = useState(false);
+  const [resetScope, setResetScope] = useState(""); // "" semua | "none" tanpa folder | id folder
   const [resetBusy, setResetBusy] = useState(false);
   const [studios, setStudios] = useState<Target[]>([]);
   const [hosts, setHosts] = useState<Target[]>([]);
@@ -55,7 +56,7 @@ export default function KoleksiPage() {
   const [msg, setMsg] = useState("");
   const [manual, setManual] = useState({ itemId: "", shopId: "", name: "", price: "", commissionRate: "", tags: "" });
 
-  const pageSize = 24;
+  const pageSize = 100;
 
   const load = useCallback(async () => {
     const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
@@ -115,14 +116,19 @@ export default function KoleksiPage() {
     setResetBusy(true);
     const r = await api<{ removed: number }>("/api/collection", {
       method: "DELETE",
-      body: JSON.stringify({ all: true }),
+      body: JSON.stringify(resetScope ? { folderId: resetScope } : { all: true }),
     });
     setResetBusy(false);
     setShowReset(false);
     if (r.ok) {
-      setMsg(`✅ Koleksi direset (${r.removed} produk dihapus)`);
+      const label =
+        resetScope === "none" ? "Tanpa Folder" :
+        resetScope ? `folder "${folders.find((f) => f.id === resetScope)?.name ?? "?"}"` :
+        "seluruh koleksi";
+      setMsg(`✅ Reset ${label} — ${r.removed} produk dihapus`);
       setSelected(new Set());
       setPage(1);
+      loadFolders();
       load();
     } else setMsg(`❌ ${r.error}`);
   }
@@ -198,6 +204,21 @@ export default function KoleksiPage() {
     } else setMsg(`❌ ${r.error}`);
   }
 
+  async function deleteSelected() {
+    if (!confirm(`Hapus ${selected.size} produk yang dipilih dari koleksi? Tindakan ini tidak bisa dibatalkan.`)) return;
+    const r = await api("/api/collection", {
+      method: "DELETE",
+      body: JSON.stringify({ ids: [...selected] }),
+    });
+    if (r.ok) {
+      setMsg(`✅ ${selected.size} produk dihapus dari koleksi`);
+      setSelected(new Set());
+      setPage(1);
+      loadFolders();
+      load();
+    } else setMsg(`❌ ${r.error}`);
+  }
+
   async function updateTags(entry: Entry) {
     const t = prompt("Tags (pisahkan dengan koma):", entry.tags.join(","));
     if (t === null) return;
@@ -208,28 +229,16 @@ export default function KoleksiPage() {
     load();
   }
 
-  // Pilih semua produk sesuai filter aktif — lintas halaman (loop max 100/halaman)
-  async function selectAll() {
-    if (selected.size >= total && total > 0) {
-      setSelected(new Set());
-      return;
-    }
-    const ids: string[] = [];
-    let p = 1;
-    for (;;) {
-      const qs = new URLSearchParams({ page: String(p), pageSize: "100" });
-      if (q) qs.set("q", q);
-      if (tag) qs.set("tag", tag);
-      if (sent) qs.set("sent", sent);
-      if (minComm) qs.set("minComm", minComm);
-      if (activeFolder) qs.set("folder", activeFolder);
-      const r = await api<{ entries: Entry[]; total: number }>(`/api/collection?${qs}`);
-      if (!r.ok) break;
-      ids.push(...r.entries.map((e) => e.id));
-      if (p * 100 >= r.total || r.entries.length === 0) break;
-      p += 1;
-    }
-    setSelected(new Set(ids));
+  // Pilih semua produk di halaman yang sedang tampil saja — pindah halaman
+  // tidak ikut menceklis; pilihan halaman lain yang sudah ada tetap tersimpan.
+  const allPageSelected = entries.length > 0 && entries.every((e) => selected.has(e.id));
+  function selectAll() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) entries.forEach((e) => next.delete(e.id));
+      else entries.forEach((e) => next.add(e.id));
+      return next;
+    });
   }
 
   function toggle(id: string) {
@@ -251,7 +260,7 @@ export default function KoleksiPage() {
           <p className="text-zinc-400 text-sm">{total} produk hasil riset & manual</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => setShowReset(true)}
+          <button onClick={() => { setResetScope(activeFolder); setShowReset(true); }}
             className="bg-red-900/40 hover:bg-red-900/70 border border-red-800 text-red-300 rounded-lg px-4 py-2 text-sm font-medium">
             ↺ Reset
           </button>
@@ -325,13 +334,13 @@ export default function KoleksiPage() {
           <option value="komisi">Urutkan: Komisi</option>
           <option value="rating">Urutkan: Rating</option>
         </select>
-        <button onClick={selectAll} disabled={total === 0}
+        <button onClick={selectAll} disabled={entries.length === 0}
           className={`rounded-lg px-3 py-2 border transition disabled:opacity-40 ${
-            selected.size >= total && total > 0
+            allPageSelected
               ? "border-orange-500 bg-orange-600/10 text-orange-300"
               : "border-zinc-800 bg-zinc-900 hover:border-zinc-600"
           }`}>
-          {selected.size >= total && total > 0 ? `✕ Batal Pilih (${selected.size})` : `☑ Pilih Semua (${total})`}
+          {allPageSelected ? `✕ Batal Pilih Halaman Ini` : `☑ Pilih Semua Halaman Ini (${entries.length})`}
         </button>
       </div>
 
@@ -421,6 +430,10 @@ export default function KoleksiPage() {
           <button onClick={() => setShowMove(true)}
             className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg px-4 py-2 text-sm font-semibold">
             📁 Pindah Folder
+          </button>
+          <button onClick={deleteSelected}
+            className="bg-red-900/40 hover:bg-red-900/70 border border-red-800 text-red-300 rounded-lg px-4 py-2 text-sm font-semibold">
+            🗑 Hapus
           </button>
           <button onClick={() => setSelected(new Set())} className="text-zinc-400 text-sm hover:text-zinc-100">
             Batal
@@ -557,21 +570,47 @@ export default function KoleksiPage() {
         </div>
       )}
 
-      {/* Modal konfirmasi reset */}
+      {/* Modal konfirmasi reset — bisa seluruh koleksi atau per folder */}
       {showReset && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowReset(false)}>
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-            <h2 className="font-bold text-lg mb-2">Reset Koleksi?</h2>
-            <p className="text-zinc-400 text-sm mb-5">
-              Semua {total} produk di koleksi akan dihapus, termasuk assignment yang belum dipakai.
-              Produk yang sudah masuk sesi live tidak memengaruhi riwayat live.
-              Hasil riset baru dari extension akan mengisi koleksi lagi. Tindakan ini tidak bisa dibatalkan.
+            <h2 className="font-bold text-lg mb-2">Reset Koleksi</h2>
+            <p className="text-zinc-400 text-sm mb-4">
+              Pilih cakupan yang mau direset. Produk di cakupan tsb dihapus dari koleksi
+              (folder-nya sendiri tidak dihapus). Produk yang sudah masuk sesi live tidak
+              memengaruhi riwayat live. Tindakan ini tidak bisa dibatalkan.
             </p>
+            <div className="space-y-1.5 max-h-56 overflow-y-auto mb-5">
+              <button onClick={() => setResetScope("")}
+                className={`w-full text-left text-sm rounded-lg px-3 py-2 border transition ${
+                  resetScope === "" ? "border-red-500 bg-red-600/10 text-red-300" : "border-zinc-700 hover:border-zinc-500"
+                }`}>
+                Semua koleksi
+              </button>
+              {folders.map((f) => (
+                <button key={f.id} onClick={() => setResetScope(f.id)}
+                  className={`w-full flex items-center gap-2 text-left text-sm rounded-lg px-3 py-2 border transition ${
+                    resetScope === f.id ? "border-red-500 bg-red-600/10 text-red-300" : "border-zinc-700 hover:border-zinc-500"
+                  }`}>
+                  <span className="flex-1">📁 {f.name}</span>
+                  <span className="text-xs text-zinc-500">{f.count} produk</span>
+                </button>
+              ))}
+              <button onClick={() => setResetScope("none")}
+                className={`w-full text-left text-sm rounded-lg px-3 py-2 border transition ${
+                  resetScope === "none" ? "border-red-500 bg-red-600/10 text-red-300" : "border-zinc-700 hover:border-zinc-500"
+                }`}>
+                Tanpa Folder
+              </button>
+            </div>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setShowReset(false)} className="px-4 py-2 text-sm text-zinc-400">Batal</button>
               <button onClick={doReset} disabled={resetBusy}
                 className="bg-red-700 hover:bg-red-600 disabled:opacity-40 rounded-lg px-4 py-2 text-sm font-semibold">
-                {resetBusy ? "Menghapus…" : "Ya, Reset Semua"}
+                {resetBusy ? "Menghapus…" :
+                  resetScope === "" ? "Ya, Reset Semua" :
+                  resetScope === "none" ? "Ya, Reset Tanpa Folder" :
+                  `Ya, Reset "${folders.find((f) => f.id === resetScope)?.name ?? "?"}"`}
               </button>
             </div>
           </div>

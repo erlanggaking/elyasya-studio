@@ -86,17 +86,17 @@ async function callShopee(
 
 // ---------- OAuth ------------------------------------------------------------
 
-function createOAuthState(hostId: string) {
+function createOAuthState(hostId: string, userId: string) {
   const expiresAt = Math.floor(Date.now() / 1000) + 15 * 60;
   const payload = Buffer.from(
-    JSON.stringify({ hostId, expiresAt, nonce: crypto.randomBytes(12).toString("hex") })
+    JSON.stringify({ hostId, userId, expiresAt, nonce: crypto.randomBytes(12).toString("hex") })
   ).toString("base64url");
   const signature = crypto.createHmac("sha256", STATE_SECRET).update(payload).digest("base64url");
   return `${payload}.${signature}`;
 }
 
 /** Verifikasi state callback agar akun tidak bisa ditautkan ke host lewat URL palsu. */
-export function readOAuthState(state: string): string | null {
+export function readOAuthState(state: string): { hostId: string; userId: string } | null {
   const [payload, suppliedSignature] = state.split(".");
   if (!payload || !suppliedSignature) return null;
 
@@ -111,29 +111,38 @@ export function readOAuthState(state: string): string | null {
   try {
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
       hostId?: unknown;
+      userId?: unknown;
       expiresAt?: unknown;
     };
     if (typeof parsed.hostId !== "string" || !parsed.hostId) return null;
+    if (typeof parsed.userId !== "string" || !parsed.userId) return null;
     if (typeof parsed.expiresAt !== "number" || parsed.expiresAt < Math.floor(Date.now() / 1000)) {
       return null;
     }
-    return parsed.hostId;
+    return { hostId: parsed.hostId, userId: parsed.userId };
   } catch {
     return null;
   }
 }
 
-export function buildAuthorizeUrl(state: string) {
-  const signedState = createOAuthState(state);
+export function buildAuthorizeUrl(hostId: string, userId: string) {
+  const signedState = createOAuthState(hostId, userId);
   const callbackUrl = redirectUrl();
-  callbackUrl.searchParams.set("state", signedState);
   if (SHOPEE_MOCK) {
     // Mode mock: langsung ke callback lokal dengan shop_id palsu.
     const shopId = String(100000 + Math.floor(Math.random() * 900000));
     callbackUrl.searchParams.set("code", "MOCKCODE");
     callbackUrl.searchParams.set("shop_id", shopId);
+    callbackUrl.searchParams.set("state", signedState);
     return callbackUrl.toString();
   }
+
+  // TERBUKTI JALAN (jangan diubah tanpa uji ulang): otorisasi shop via
+  // auth_partner ber-signature. Callback membawa shop_id; user_id streamer
+  // diturunkan dari uid pemilik shop (get_shop_base) — kombinasi token shop +
+  // user_id=uid diterima semua endpoint /livestream (pin/keranjang/metrik
+  // sudah terverifikasi tembus ke live asli host).
+  callbackUrl.searchParams.set("state", signedState);
   const path = "/api/v2/shop/auth_partner";
   const timestamp = Math.floor(Date.now() / 1000);
   const params = new URLSearchParams({
@@ -145,7 +154,10 @@ export function buildAuthorizeUrl(state: string) {
   return `${API_BASE}${path}?${params}`;
 }
 
-export async function exchangeCode(code: string, shopId: string) {
+export async function exchangeCode(
+  code: string,
+  ids: { shopId?: string; mainAccountId?: string }
+) {
   if (SHOPEE_MOCK) {
     return {
       access_token: `mock-access-${crypto.randomUUID()}`,
@@ -154,11 +166,21 @@ export async function exchangeCode(code: string, shopId: string) {
     };
   }
   return callShopee("/api/v2/auth/token/get", {
-    body: { code, shop_id: Number(shopId), partner_id: Number(PARTNER_ID) },
+    body: {
+      code,
+      partner_id: Number(PARTNER_ID),
+      ...(ids.mainAccountId
+        ? { main_account_id: Number(ids.mainAccountId) }
+        : { shop_id: Number(ids.shopId) }),
+    },
   });
 }
 
-export async function refreshAccessToken(refreshToken: string, shopId: string) {
+export async function refreshAccessToken(
+  refreshToken: string,
+  shopId: string,
+  userId = ""
+) {
   if (SHOPEE_MOCK) {
     return {
       access_token: `mock-access-${crypto.randomUUID()}`,
@@ -166,11 +188,14 @@ export async function refreshAccessToken(refreshToken: string, shopId: string) {
       expire_in: 4 * 3600,
     };
   }
+  // TERBUKTI JALAN: refresh SELALU pakai shop_id (token kita otorisasi shop).
+  // Varian user_id ditolak Shopee: "refresh token or user_id is wrong".
+  void userId;
   return callShopee("/api/v2/auth/access_token/get", {
     body: {
       refresh_token: refreshToken,
-      shop_id: Number(shopId),
       partner_id: Number(PARTNER_ID),
+      shop_id: Number(shopId),
     },
   });
 }
@@ -352,6 +377,40 @@ export async function updateShowItem(
     shopId: ctx.shopId,
     userId: ctx.userId ?? "",
     body: { session_id: Number(sessionId), ...item },
+  });
+}
+
+/** Daftar keranjang aktual sesi — termasuk produk yang ditambahkan host dari HP. */
+export async function getItemList(
+  ctx: ShopeeCtx,
+  sessionId: string | number,
+  offset = 0,
+  pageSize = 100
+): Promise<{
+  more?: boolean;
+  next_offset?: number;
+  list?: Array<Record<string, unknown>>;
+  item_list?: Array<Record<string, unknown>>;
+}> {
+  if (SHOPEE_MOCK) return { more: false, next_offset: 0, list: [] };
+  return callShopee("/api/v2/livestream/get_item_list", {
+    method: "GET",
+    accessToken: ctx.accessToken,
+    shopId: ctx.shopId,
+    userId: ctx.userId ?? "",
+    query: { session_id: sessionId, offset, page_size: pageSize },
+  });
+}
+
+/** Produk yang sedang dipin/ditampilkan di room. */
+export async function getShowItem(ctx: ShopeeCtx, sessionId: string | number) {
+  if (SHOPEE_MOCK) return {};
+  return callShopee("/api/v2/livestream/get_show_item", {
+    method: "GET",
+    accessToken: ctx.accessToken,
+    shopId: ctx.shopId,
+    userId: ctx.userId ?? "",
+    query: { session_id: sessionId },
   });
 }
 

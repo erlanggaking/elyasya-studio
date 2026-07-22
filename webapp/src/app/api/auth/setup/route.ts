@@ -25,6 +25,7 @@ export async function POST(req: Request) {
       email: String(email).toLowerCase().trim(),
       name: name || "Admin",
       passwordHash: await bcrypt.hash(password, 10),
+      role: "superuser",
     },
   });
   await createSession(user.id);

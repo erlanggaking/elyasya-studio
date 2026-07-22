@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { exchangeCode, readOAuthState } from "@/lib/shopee";
 import { uidFromShop } from "@/lib/shopee-live";
+import { isSuperuser } from "@/lib/tenant";
 
 // Origin publik app. Di belakang proxy (nginx), req.url terbaca sebagai origin
 // internal (localhost:3000) — pakai header X-Forwarded-* dari nginx, dengan
@@ -23,15 +24,13 @@ export async function GET(req: Request) {
   const origin = publicOrigin(req);
   const code = url.searchParams.get("code") || "";
   const shopId = url.searchParams.get("shop_id") || "";
+  const mainAccountId = url.searchParams.get("main_account_id") || "";
   const oauthError = url.searchParams.get("error") || url.searchParams.get("error_auth") || "";
-  // API livestream butuh user_id streamer. Callback Shopee hanya mengirim
-  // shop_id (diverifikasi dari log), jadi user_id diturunkan dari uid pemilik
-  // shop via get_shop_base — terbukti diterima endpoint livestream.
   let userId =
     url.searchParams.get("user_id") ||
-    url.searchParams.get("main_account_id") ||
     "";
-  const hostId = readOAuthState(url.searchParams.get("state") || "") || "";
+  const oauthState = readOAuthState(url.searchParams.get("state") || "");
+  const hostId = oauthState?.hostId ?? "";
 
   // Log semua param (tanpa code) — untuk diagnosa bentuk callback Shopee.
   const debugParams = Object.fromEntries(
@@ -43,25 +42,34 @@ export async function GET(req: Request) {
     return NextResponse.redirect(new URL("/setting?shopee=invalid_state", origin));
   }
 
-  const host = await db.host.findUnique({ where: { id: hostId } });
-  if (!host) {
+  const [host, initiator] = await Promise.all([
+    db.host.findUnique({ where: { id: hostId } }),
+    oauthState
+      ? db.user.findUnique({ where: { id: oauthState.userId } })
+      : Promise.resolve(null),
+  ]);
+  if (!host || !initiator || (!isSuperuser(initiator) && host.ownerId !== initiator.id)) {
     return NextResponse.redirect(new URL("/setting?shopee=hostnotfound", origin));
   }
 
-  if (oauthError || !code || !shopId) {
+  if (oauthError || !code || (!shopId && !mainAccountId)) {
     return NextResponse.redirect(new URL(`/live/host/${hostId}?shopee=denied`, origin));
   }
 
   try {
-    const token = await exchangeCode(code, shopId);
-    if (!userId) userId = (await uidFromShop(shopId)) ?? "";
+    const token = await exchangeCode(code, { shopId, mainAccountId });
+    const resolvedShopId = shopId || String(token.shop_id_list?.[0] ?? mainAccountId);
+    // TERBUKTI JALAN: callback Shopee hanya mengirim shop_id; user_id untuk
+    // endpoint livestream = uid pemilik shop via get_shop_base.
+    userId = userId || String(token.user_id_list?.[0] ?? "");
+    if (!userId) userId = (await uidFromShop(resolvedShopId)) ?? "";
     await db.shopeeAccount.upsert({
-      where: { hostId_shopId: { hostId, shopId } },
+      where: { hostId_shopId: { hostId, shopId: resolvedShopId } },
       create: {
         hostId,
-        shopId,
+        shopId: resolvedShopId,
         userId,
-        shopName: `Shop ${shopId}`,
+        shopName: `Shop ${resolvedShopId}`,
         accessToken: token.access_token,
         refreshToken: token.refresh_token,
         tokenExpiresAt: new Date(Date.now() + (token.expire_in ?? 14400) * 1000),

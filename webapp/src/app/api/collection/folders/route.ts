@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
+import { isSuperuser } from "@/lib/tenant";
 
 // Daftar folder + jumlah produk di masing-masing
 export async function GET() {
@@ -22,6 +23,12 @@ export async function GET() {
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!isSuperuser(user)) {
+    return NextResponse.json(
+      { ok: false, error: "Hanya superuser yang boleh membuat folder bersama" },
+      { status: 403 }
+    );
+  }
 
   const body = await req.json().catch(() => ({}));
   const name = String(body.name || "").trim();
@@ -42,6 +49,12 @@ export async function POST(req: Request) {
 export async function PATCH(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!isSuperuser(user)) {
+    return NextResponse.json(
+      { ok: false, error: "Hanya superuser yang boleh mengganti nama folder bersama" },
+      { status: 403 }
+    );
+  }
 
   const body = await req.json().catch(() => ({}));
   const id = String(body.id || "");
@@ -63,6 +76,12 @@ export async function PATCH(req: Request) {
 export async function DELETE(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!isSuperuser(user)) {
+    return NextResponse.json(
+      { ok: false, error: "Hanya superuser yang boleh menghapus folder bersama" },
+      { status: 403 }
+    );
+  }
 
   const body = await req.json().catch(() => ({}));
   const id = String(body.id || "");

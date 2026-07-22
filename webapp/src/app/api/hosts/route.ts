@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { tokenStatus } from "@/lib/shopee-account";
+import { canAccessStudio, hostTenantWhere } from "@/lib/tenant";
 
 export async function GET(req: Request) {
   const user = await getSessionUser();
@@ -14,6 +15,7 @@ export async function GET(req: Request) {
   const pageSize = Math.min(100, Number(url.searchParams.get("pageSize")) || 25);
 
   const where = {
+    ...hostTenantWhere(user),
     ...(q ? { name: { contains: q } } : {}),
     ...(studioId ? { studioId } : {}),
   };
@@ -64,12 +66,20 @@ export async function POST(req: Request) {
   if (!name) {
     return NextResponse.json({ ok: false, error: "Nama host wajib diisi" }, { status: 400 });
   }
+  const studioId = body.studioId ? String(body.studioId) : null;
+  if (studioId && !(await canAccessStudio(user, studioId))) {
+    return NextResponse.json({ ok: false, error: "Studio tidak ditemukan" }, { status: 404 });
+  }
+  const studio = studioId
+    ? await db.studio.findUnique({ where: { id: studioId }, select: { ownerId: true } })
+    : null;
   const host = await db.host.create({
     data: {
       name,
       note: String(body.note || ""),
       contact: String(body.contact || ""),
-      studioId: body.studioId || null,
+      studioId,
+      ownerId: studio?.ownerId ?? user.id,
     },
   });
   return NextResponse.json({ ok: true, host });

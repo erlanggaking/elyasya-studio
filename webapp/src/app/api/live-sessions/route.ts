@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { getActiveAccount } from "@/lib/shopee-account";
 import { createSession, startSession } from "@/lib/shopee";
+import { hostTenantWhere, sessionTenantWhere } from "@/lib/tenant";
 
 // Buat & mulai sesi live untuk satu host (PRD §7.4):
 // createSession + startSession → simpan push_url/push_key/share_url.
@@ -14,7 +15,10 @@ export async function POST(req: Request) {
   const hostId = String(body.hostId || "");
   const title = String(body.title || "").trim() || "Live Elyasya Studio";
 
-  const host = await db.host.findUnique({ where: { id: hostId }, include: { studio: true } });
+  const host = await db.host.findFirst({
+    where: { id: hostId, ...hostTenantWhere(user) },
+    include: { studio: true },
+  });
   if (!host) return NextResponse.json({ ok: false, error: "Host tidak ditemukan" }, { status: 404 });
 
   const account = await getActiveAccount(hostId);
@@ -69,7 +73,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const status = url.searchParams.get("status") || undefined;
   const sessions = await db.liveSession.findMany({
-    where: status ? { status } : {},
+    where: { ...sessionTenantWhere(user), ...(status ? { status } : {}) },
     orderBy: { createdAt: "desc" },
     take: 100,
     include: {

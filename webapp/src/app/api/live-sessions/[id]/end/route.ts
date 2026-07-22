@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/auth";
 import { getActiveAccount } from "@/lib/shopee-account";
 import { endSession, SHOPEE_MOCK } from "@/lib/shopee";
 import { getSessionLiveState } from "@/lib/shopee-live";
+import { sessionTenantWhere } from "@/lib/tenant";
 
 // Akhiri live host: kirim end_session ke Shopee, VERIFIKASI live benar-benar
 // berhenti, baru tandai selesai di DB. Tidak ada sukses palsu — kalau Shopee
@@ -20,7 +21,7 @@ export async function POST(
   const body = await req.json().catch(() => ({}));
   const force = body.force === true;
 
-  const session = await db.liveSession.findUnique({ where: { id } });
+  const session = await db.liveSession.findFirst({ where: { id, ...sessionTenantWhere(user) } });
   if (!session) return NextResponse.json({ ok: false, error: "Sesi tidak ditemukan" }, { status: 404 });
   if (session.status !== "live") {
     return NextResponse.json({ ok: false, error: "Sesi tidak sedang live" }, { status: 400 });
