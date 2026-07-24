@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { jwtVerify } from "jose";
 
 const SECRET = new TextEncoder().encode(process.env.AUTH_SECRET || "elyasya-dev-secret");
-const PUBLIC_PATHS = ["/login", "/api/auth", "/api/extension", "/api/research", "/api/shopee/callback"];
+const PUBLIC_PATHS = ["/login", "/api/auth", "/api/extension", "/api/research", "/api/shopee/callback", "/api/internal"];
 
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;

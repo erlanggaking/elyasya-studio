@@ -112,6 +112,10 @@ model ShopeeAccount {
   scope          String    @default("livestream") // livestream | affiliate | cookie
   // Perangkat extension yang terakhir eksekusi perintah cookie (diagnostik).
   connectorDeviceId String @default("")
+  // Cookie sesi Shopee host (scope=cookie, di-import via cookie-editor). Dipakai
+  // server memanggil API internal Shopee atas nama host — untuk akun AFFILIATE
+  // (is_seller=false) yang tidak bisa OAuth Partner sama sekali.
+  cookie         String    @default("")
   status         String    @default("active") // active | expired | revoked
   connectedAt    DateTime  @default(now())
 

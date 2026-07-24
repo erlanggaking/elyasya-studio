@@ -94,7 +94,11 @@ export async function syncItemMetricsJob() {
   });
   for (const session of sessions) {
     const activeAccount = await getActiveAccount(session.hostId);
-    if (!activeAccount || activeAccount.scope === "cookie") continue;
+    if (!activeAccount) continue;
+
+    // Host cookie/affiliate ditangani WORKER HEADLESS (metrik akurat via cookie).
+    // Jangan sentuh di sini supaya tidak bertabrakan menimpa data worker.
+    if (activeAccount.scope === "cookie") continue;
     try {
       await withActiveAccount(session.hostId, async (account) => {
         if (!account.userId) throw new Error("user_id akun Shopee kosong");
@@ -295,7 +299,10 @@ export async function autoPinJob() {
     const { host } = session;
     if (!host.autoPinEnabled || session.items.length < 2) continue;
 
-    const interval = Math.max(10, host.autoPinSeconds || 60) * 1000;
+    // Interval dasar + jitter ±25% supaya pin TIDAK di detik yang persis sama
+    // tiap kali (pola robotik memicu deteksi bot Shopee).
+    const base = Math.max(10, host.autoPinSeconds || 60) * 1000;
+    const interval = base * (0.85 + Math.random() * 0.4);
     const last = lastPinAt.get(session.id) ?? 0;
     if (Date.now() - last < interval) continue;
 

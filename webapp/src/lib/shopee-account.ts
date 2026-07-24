@@ -89,6 +89,10 @@ export async function getActiveAccount(
   });
   if (!account) return null;
 
+  // Akun cookie tidak pakai token OAuth → jangan pernah dicoba di-refresh
+  // (tidak punya refreshToken). Kembalikan apa adanya.
+  if (account.scope === "cookie") return account;
+
   const soon = Date.now() + 10 * 60 * 1000; // refresh kalau expired < 10 menit lagi
   const needsRefresh =
     forceRefresh || !account.tokenExpiresAt || account.tokenExpiresAt.getTime() < soon;
